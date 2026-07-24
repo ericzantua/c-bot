@@ -156,9 +156,8 @@ def count_products() -> int:
     return res.count or 0
 
 
-def _retrieve(question: str, k: int):
+def _retrieve(query_vec: list[float], k: int):
     """Return (docs, metas) — chunk texts + {item_code, title} for citations."""
-    query_vec = embeddings.embed_query(question)
     if not query_vec:
         return [], []
     rows = (
@@ -207,7 +206,9 @@ def chat(
 ) -> tuple[str, str, str, str, list[Citation], bool]:
     """Returns (answer, answer_en, question_foreign, question_en, citations, not_found)."""
     """Answer a question grounded in retrieved product context."""
-    docs, metas = _retrieve(question, config.TOP_K)
+    # Embed the question once, reuse for both product + knowledge retrieval.
+    query_vec = embeddings.embed_query(question)
+    docs, metas = _retrieve(query_vec, config.TOP_K)
     product_context = (
         "\n\n".join(f"- {doc}" for doc in docs) if docs else "(no products are indexed yet)"
     )
@@ -215,7 +216,7 @@ def chat(
     # Pull relevant reference-doc chunks (policies, rules, etc.).
     import knowledge  # local import avoids a circular import at module load
 
-    kchunks = knowledge.retrieve(question, 4)
+    kchunks = knowledge.retrieve(query_vec, 4)
 
     context_parts = [f"PRODUCTS:\n{product_context}"]
     if kchunks:

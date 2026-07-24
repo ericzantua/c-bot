@@ -94,9 +94,8 @@ def delete_document(doc_id: str) -> None:
     db.client().table("knowledge_docs").delete().eq("doc_id", doc_id).execute()
 
 
-def retrieve(query: str, k: int = 4) -> list[tuple[str, str]]:
-    """Return up to k (chunk_text, doc_title) relevant to the query."""
-    query_vec = embeddings.embed_query(query)
+def retrieve(query_vec: list[float], k: int = 4) -> list[tuple[str, str]]:
+    """Return up to k (chunk_text, doc_title) for a pre-computed query embedding."""
     if not query_vec:
         return []
     rows = (

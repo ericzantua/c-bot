@@ -141,10 +141,11 @@ Stop-self-answer bug); audio unlocked on mic tap (autoplay); animation starts on
 - **Vite `/api` proxy** — same-origin dev, no CORS friction. Mic needs HTTPS on non-localhost (Safari) → satisfied by the Vercel HTTPS domain in prod.
 
 ## 4. Status
-Code migrated from local ChromaDB/sentence-transformers to **Supabase (pgvector) + Voyage embeddings**, and prepped for **all-Vercel serverless deploy** + **PWA**. All backend modules compile; `supabase` installed in `.venv` (2.31.0, no httpx conflict). Prior real data (7 products incl. 3 real TVs via CDP open-tabs + a Costco returns/policy doc) still lives in local `chroma_db/` awaiting migration.
-- **PENDING user setup** (blocks testing): create Supabase schema (`backend/supabase_schema.sql`), get a Voyage key, set `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`/`VOYAGE_API_KEY` in `backend/.env`. Then run `migrate_to_supabase.py`.
-- **NOT yet verified against Supabase**: chat/retrieval, products, knowledge, settings (all rewritten, compile-clean, but need live creds). Pre-migration these were verified live on the old Chroma stack (chat grounded/compare/not-found, editable products, guidelines, KB Q&A, multilingual+bilingual, TTS 200 MP3 River).
-- **Deploy pending**: push to GitHub (ezantua@gmail.com), import to Vercel, set env vars (ANTHROPIC/SUPABASE/VOYAGE/ELEVENLABS). Decided all-Vercel + Supabase, Hobby plan.
+Migrated from local ChromaDB/sentence-transformers to **Supabase (pgvector) + Voyage embeddings**; prepped for **all-Vercel serverless deploy** + **PWA**.
+- **DONE — Supabase migration + verified live**: schema run in project `c-bot` (ref `eumhtymlowchfitvetho`); `migrate_to_supabase.py` loaded **7 products + 1 returns/policy doc (13 chunks)**. Verified end-to-end against Supabase: product retrieval + compare (citations correct), knowledge/policy Q&A — both grounded via Voyage query-embed → pgvector RPC → Claude. Settings on Supabase row.
+- **Voyage free-tier rate limit (⚠️)**: no-payment-method accounts get ~3 req/min. Migration is paced (`MIGRATE_DELAY=25s`); `embeddings.embed` has 429 backoff; `rag.chat` now embeds the query ONCE (reused for product + knowledge retrieval). For real usage the user should **add a payment method to Voyage** (raises RPM; first 200M tokens still free).
+- **GitHub — DONE**: pushed to `github.com/ericzantua/c-bot` (main). Credential helper = osxkeychain. (User pasted a PAT in chat once → advised to revoke.)
+- **Deploy PENDING**: import repo to Vercel, set env vars (ANTHROPIC/SUPABASE_URL/SUPABASE_SERVICE_KEY/VOYAGE/ELEVENLABS). All-Vercel + Supabase, Hobby plan.
 - **Costco scraping**: unchanged, LOCAL only via **CDP open-tabs**; cloud never scrapes. Automated `/index`/`/index/url` still 403 (Akamai). Samples/manual/photo are always-on fallbacks.
 - **Browser-not-verified-by-me**: Lottie render, voice end-to-end, bilingual tabs/toggle, store-bg layout, PWA install on iPhone. User tests iteratively.
 - Known constraints: Python 3.11–3.13 (`.venv` is 3.13); voice best in Chrome/Edge (Safari STT unreliable); Cantonese voice/STT lean Mandarin.
