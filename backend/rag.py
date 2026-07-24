@@ -1,7 +1,7 @@
-"""Retrieval-Augmented Generation over the local ChromaDB product store.
+"""Retrieval-Augmented Generation over the Supabase (pgvector) product store.
 
 Responsibilities:
-  * chunk + embed + store scraped products (embeddings via sentence-transformers)
+  * chunk + embed (Voyage) + store scraped products in Supabase
   * list / delete products
   * retrieve relevant chunks for a query and answer with Claude, grounded only
     in that context.
@@ -10,11 +10,9 @@ import json
 
 from anthropic import Anthropic
 
-import chromadb
-from chromadb.config import Settings
-from chromadb.utils import embedding_functions
-
 import config
+import db
+import embeddings
 import settings_store
 from models import Citation, Message, ProductData
 
@@ -53,7 +51,6 @@ _SYSTEM_PROMPT = (
 )
 
 _client: Anthropic | None = None
-_collection = None
 
 
 def _get_client() -> Anthropic:
@@ -63,44 +60,6 @@ def _get_client() -> Anthropic:
             raise RuntimeError("ANTHROPIC_API_KEY is not set (see backend/.env).")
         _client = Anthropic(api_key=config.ANTHROPIC_API_KEY)
     return _client
-
-
-_chroma_client = None
-_embed_fn = None
-
-
-def chroma_client():
-    """Shared persistent Chroma client (products + knowledge)."""
-    global _chroma_client
-    if _chroma_client is None:
-        # anonymized_telemetry=False silences ChromaDB's noisy telemetry warnings.
-        _chroma_client = chromadb.PersistentClient(
-            path=config.CHROMA_DIR,
-            settings=Settings(anonymized_telemetry=False),
-        )
-    return _chroma_client
-
-
-def embedding_function():
-    """Shared local embedding function (loaded once)."""
-    global _embed_fn
-    if _embed_fn is None:
-        _embed_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-            model_name=config.EMBED_MODEL
-        )
-    return _embed_fn
-
-
-def get_collection():
-    """Lazily create the persistent product collection."""
-    global _collection
-    if _collection is None:
-        _collection = chroma_client().get_or_create_collection(
-            name=config.COLLECTION_NAME,
-            embedding_function=embedding_function(),
-            metadata={"hnsw:space": "cosine"},
-        )
-    return _collection
 
 
 def _chunks_for(product: ProductData) -> list[str]:
@@ -129,60 +88,51 @@ def _chunks_for(product: ProductData) -> list[str]:
 
 
 def index_product(product: ProductData) -> int:
-    """Replace any existing chunks for this item and store fresh ones."""
-    collection = get_collection()
-    # Idempotent: clear prior chunks for this item before re-adding.
-    collection.delete(where={"item_code": product.item_code})
+    """Upsert the product record + replace its embedded chunks in Supabase."""
+    sb = db.client()
+    # Upsert the full record (edit/list without re-scraping).
+    sb.table("products").upsert(
+        {"item_code": product.item_code, "data": json.loads(product.model_dump_json())}
+    ).execute()
+    # Idempotent: clear prior chunks, then insert fresh embedded ones.
+    sb.table("product_chunks").delete().eq("item_code", product.item_code).execute()
 
     chunks = _chunks_for(product)
-    ids = [f"{product.item_code}-{i}" for i in range(len(chunks))]
-    # Store the full record as JSON so products can be listed/edited without
-    # re-scraping (metadata values must be primitives — a JSON string is fine).
-    data_json = product.model_dump_json()
-    metadatas = [
-        {
-            "item_code": product.item_code,
-            "title": product.title,
-            "price": product.price,
-            "_data": data_json,
-        }
-        for _ in chunks
+    vectors = embeddings.embed(chunks, input_type="document")
+    rows = [
+        {"item_code": product.item_code, "content": chunk, "embedding": vec}
+        for chunk, vec in zip(chunks, vectors)
     ]
-    collection.add(ids=ids, documents=chunks, metadatas=metadatas)
-    return len(chunks)
+    if rows:
+        sb.table("product_chunks").insert(rows).execute()
+    return len(rows)
 
 
-def _product_from_meta(meta: dict) -> ProductData:
-    """Reconstruct a full ProductData from a chunk's stored metadata."""
-    raw = meta.get("_data")
-    if raw:
-        try:
-            return ProductData(**json.loads(raw))
-        except (json.JSONDecodeError, TypeError, ValueError):
-            pass
-    # Legacy fallback (pre-_data records).
-    return ProductData(
-        item_code=meta.get("item_code", ""),
-        title=meta.get("title", ""),
-        price=meta.get("price", ""),
-    )
+def _product_from_row(row: dict) -> ProductData:
+    """Reconstruct a ProductData from a `products.data` jsonb row."""
+    data = row.get("data") or {}
+    if isinstance(data, str):
+        data = json.loads(data)
+    return ProductData(**data)
 
 
 def list_products() -> list[ProductData]:
-    collection = get_collection()
-    data = collection.get(include=["metadatas"])
-    seen: dict[str, ProductData] = {}
-    for meta in data.get("metadatas") or []:
-        code = meta.get("item_code")
-        if code and code not in seen:
-            seen[code] = _product_from_meta(meta)
-    return list(seen.values())
+    rows = db.client().table("products").select("data").execute().data or []
+    return [_product_from_row(r) for r in rows]
 
 
 def get_product(item_code: str) -> ProductData | None:
-    data = get_collection().get(where={"item_code": item_code}, include=["metadatas"])
-    metas = data.get("metadatas") or []
-    return _product_from_meta(metas[0]) if metas else None
+    rows = (
+        db.client()
+        .table("products")
+        .select("data")
+        .eq("item_code", item_code)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    return _product_from_row(rows[0]) if rows else None
 
 
 def update_product(product: ProductData) -> ProductData:
@@ -192,24 +142,44 @@ def update_product(product: ProductData) -> ProductData:
 
 
 def delete_product(item_code: str) -> None:
-    get_collection().delete(where={"item_code": item_code})
+    # chunks cascade-delete via the FK.
+    db.client().table("products").delete().eq("item_code", item_code).execute()
 
 
 def count_products() -> int:
-    return len(list_products())
+    res = (
+        db.client()
+        .table("products")
+        .select("item_code", count="exact")
+        .execute()
+    )
+    return res.count or 0
 
 
 def _retrieve(question: str, k: int):
-    collection = get_collection()
-    if collection.count() == 0:
+    """Return (docs, metas) — chunk texts + {item_code, title} for citations."""
+    query_vec = embeddings.embed_query(question)
+    if not query_vec:
         return [], []
-    result = collection.query(
-        query_texts=[question],
-        n_results=min(k, collection.count()),
-        include=["documents", "metadatas"],
+    rows = (
+        db.client()
+        .rpc("match_products", {"query_embedding": query_vec, "match_count": k})
+        .execute()
+        .data
+        or []
     )
-    docs = (result.get("documents") or [[]])[0]
-    metas = (result.get("metadatas") or [[]])[0]
+    docs, metas = [], []
+    for r in rows:
+        docs.append(r.get("content", ""))
+        data = r.get("data") or {}
+        if isinstance(data, str):
+            try:
+                data = json.loads(data)
+            except (json.JSONDecodeError, ValueError):
+                data = {}
+        metas.append(
+            {"item_code": r.get("item_code", ""), "title": data.get("title", "")}
+        )
     return docs, metas
 
 

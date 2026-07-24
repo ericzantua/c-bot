@@ -11,10 +11,20 @@ ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
 VISION_MODEL = os.getenv("VISION_MODEL", "claude-sonnet-4-6")
 
-# Local, free embeddings.
-EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
+# --- Data store: Supabase (Postgres + pgvector) ---
+# Use the SERVICE-ROLE key (server-side only; bypasses RLS). Never ship it to the
+# frontend. Set both in backend/.env and in Vercel's env vars for the API.
+SUPABASE_URL = os.getenv("SUPABASE_URL", "").strip()
+SUPABASE_SERVICE_KEY = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
 
-# ChromaDB persists here so indexed products survive restarts.
+# --- Embeddings: Voyage AI (serverless-friendly API; no local ML) ---
+VOYAGE_API_KEY = os.getenv("VOYAGE_API_KEY", "").strip()
+VOYAGE_MODEL = os.getenv("VOYAGE_MODEL", "voyage-3.5-lite")
+EMBED_DIM = int(os.getenv("EMBED_DIM", "1024"))  # must match supabase_schema.sql
+
+# Legacy local-embedding / Chroma settings — used ONLY by migrate_to_supabase.py
+# to read the old store. Not used by the running app anymore.
+EMBED_MODEL = os.getenv("EMBED_MODEL", "all-MiniLM-L6-v2")
 CHROMA_DIR = os.getenv("CHROMA_DIR", "./chroma_db")
 COLLECTION_NAME = "costco_products"
 

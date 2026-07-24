@@ -1,0 +1,10 @@
+# CLOUD (Vercel serverless) deps for the Python API — light, no local ML/browser.
+# Scraping/embeddings-model deps stay in backend/requirements.txt (local only).
+fastapi==0.115.6
+python-multipart==0.0.20
+pydantic==2.10.4
+anthropic==0.69.0
+supabase>=2.9,<3
+httpx
+pypdf==5.1.0
+python-dotenv==1.0.1

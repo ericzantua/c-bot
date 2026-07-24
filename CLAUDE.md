@@ -2,31 +2,43 @@
 
 RAG chatbot for Costco products + policies: index by item code / URL / photo / CDP-tabs,
 ask & compare, multilingual (en/yue/es/fr) via text or voice with a Lottie avatar.
-Backend = FastAPI + ChromaDB + Playwright + Claude (Sonnet 4.6) + ElevenLabs TTS.
-Frontend = React/Vite + Web Speech API (STT) + lottie-react. Pages: Chat · Products · Settings.
+Backend = FastAPI + Supabase (Postgres/pgvector) + Voyage embeddings + Claude (Sonnet 4.6) + ElevenLabs TTS.
+Frontend = React/Vite PWA + Web Speech API (STT) + lottie-react. Pages: Chat · Products · Settings.
+Deploy = all-Vercel (PWA static + Python serverless API) + Supabase; scraping stays local on the Mac.
 
 ## 1. Structure
 ```
 costco-c-bot/
+├── api/
+│   └── index.py           Vercel serverless entry — mounts backend FastAPI app at /api
+├── vercel.json            Vercel build (PWA) + /api/* → Python function, 60s maxDuration
+├── requirements.txt       CLOUD (light) deps for the Vercel Python function
 ├── backend/
-│   ├── main.py            FastAPI app + all endpoints
-│   ├── config.py          env/settings (models, dirs, delays)
+│   ├── main.py            FastAPI app + all endpoints (scraper imported lazily → cloud-safe)
+│   ├── config.py          env/settings (Supabase, Voyage, models, TTS, scraper)
 │   ├── models.py          Pydantic request/response schemas
-│   ├── scraper.py         Playwright costco.ca scraper (JSON-LD + fallbacks)
+│   ├── db.py              Supabase client (service-role; cached across warm invocations)
+│   ├── embeddings.py      Voyage AI embeddings (embed / embed_query)
+│   ├── supabase_schema.sql  pgvector tables + match_products/match_knowledge + RLS (run once)
+│   ├── migrate_to_supabase.py  one-time: old ChromaDB → Supabase (re-embed via Voyage)
+│   ├── scraper.py         Playwright costco.ca scraper (JSON-LD + fallbacks) — LOCAL only
 │   ├── vision.py          Claude vision → item-code extraction
 │   ├── samples.py         canned mock products (local testing, no scrape)
 │   ├── tts.py             server-side text-to-speech (ElevenLabs default, OpenAI swappable)
-│   ├── settings_store.py  persisted editable settings (AI answer guidelines) → settings.json
-│   ├── knowledge.py       reference-doc knowledge base (policies etc.): chunk/embed/store in separate Chroma collection; retrieval merged into chat
-│   ├── rag.py             ChromaDB + embeddings + Claude chat (grounded, guideline-injected, bilingual)
-│   ├── requirements.txt   Python deps (incl. pypdf for PDF knowledge docs)
+│   ├── settings_store.py  editable AI guidelines → Supabase `settings` row
+│   ├── knowledge.py       reference-doc KB (policies): chunk/Voyage-embed → Supabase; merged into chat
+│   ├── rag.py             Supabase pgvector + Voyage + Claude chat (grounded, guideline-injected, bilingual)
+│   ├── requirements.txt   LOCAL (full) deps: adds scraper + migration (chromadb/sentence-transformers)
 │   └── .env.example       env template
 ├── frontend/
-│   ├── index.html, vite.config.js, package.json
+│   ├── index.html         + iOS PWA meta tags (apple-touch-icon, standalone)
+│   ├── vite.config.js     Vite + vite-plugin-pwa (manifest, service worker) + /api dev proxy
+│   ├── package.json
 │   ├── public/store-bg.png  blurred store aisle → chat stage background
+│   ├── public/pwa-192.png, pwa-512.png, pwa-512-maskable.png, apple-touch-icon.png  PWA icons
 │   └── src/
 │       ├── App.jsx        top nav (Chat·Products·Settings) + 🌐 language selector + view switch; owns product list
-│       ├── api.js         fetch client → /api proxy
+│       ├── api.js         fetch client, BASE=/api (Vite proxy in dev; Vercel /api/* in prod)
 │       ├── languages.js   supported langs (en/yue/es/fr) + bcp47For()
 │       ├── styles.css     all styling
 │       ├── components/
@@ -78,16 +90,18 @@ Backend endpoints (`backend/main.py`):
 - `_parse_codes(text) → (codes[], note)` — JSON array parse, regex `\d{6,7}` fallback
 - `_detect_media_type(data, fallback)` — magic-byte sniff
 
-`backend/rag.py`:
-- `get_collection()` — persistent Chroma collection + SentenceTransformer embed fn (cosine)
-- `index_product(ProductData) → int` — delete-then-add chunks; stores full record as `_data` JSON in metadata; header chunk includes regular/promo/valid-until
+`backend/rag.py` (Supabase pgvector + Voyage; public API unchanged from the Chroma version):
+- `index_product(ProductData) → int` — upsert `products` row (full record as `data` jsonb) + delete/re-insert `product_chunks` with Voyage embeddings
 - `_chunks_for(product) → str[]` — header + description + features chunks
-- `list_products() → ProductData[]` (full, from `_data`); `get_product(code)`; `update_product(p)` (re-index); `delete_product(code)`; `count_products()`
-- `_product_from_meta(meta) → ProductData` — parse `_data` JSON (legacy fallback to bare fields)
-- `_retrieve(question, k) → (docs, metas)` — top-k product query
+- `list_products() → ProductData[]` (from `products.data`); `get_product(code)`; `update_product(p)` (re-index); `delete_product(code)` (chunks cascade); `count_products()` (exact count)
+- `_product_from_row(row) → ProductData` — parse `products.data` jsonb
+- `_retrieve(question, k) → (docs, metas)` — embed query (Voyage) → `match_products` RPC; metas carry item_code+title for citations
 - `chat(question, history, language) → (answer, answer_en, question_foreign, question_en, citations, not_found)` — grounded Claude call; injects guidelines + knowledge chunks; English path = marker-based single answer; non-English = one call returning a JSON object with both languages (`_parse_json_obj`)
 
-`backend/knowledge.py`: `get_kcollection()`, `add_document(title,text,source)`, `extract_text(filename,data)` (pdf via pypdf), `list_documents()`, `delete_document(id)`, `retrieve(query,k) → [(text,title)]`, `_chunk_text()`. Uses `rag.chroma_client()` + `rag.embedding_function()` (shared).
+`backend/db.py`: `client()` — cached Supabase client (SERVICE-ROLE key; bypasses RLS).
+`backend/embeddings.py`: `embed(texts, input_type='document')`, `embed_query(text)` — Voyage `voyage-3.5-lite`, dim=`EMBED_DIM` (1024).
+
+`backend/knowledge.py`: `add_document(title,text,source)` (Voyage-embed → `knowledge_docs`/`knowledge_chunks`), `extract_text(filename,data)` (pdf via pypdf), `list_documents()`, `delete_document(id)` (chunks cascade), `retrieve(query,k) → [(text,title)]` via `match_knowledge` RPC, `_chunk_text()`.
 
 `frontend/src/api.js`: `indexCodes/indexUrls/indexOpenTabs/indexManual/indexPhoto/loadSamples`,
 `sendChat(q,history,language)`, `listProducts/updateProduct/deleteProduct`, `ttsSynthesize(text)→Blob`,
@@ -104,7 +118,11 @@ Stop-self-answer bug); audio unlocked on mic tap (autoplay); animation starts on
 - **Stealth mode** (config flags) — hides `navigator.webdriver` + automation tells, optional real-Chrome channel / headed / persistent profile, jittered pacing. Helped fingerprint but Akamai still 403'd (blocks automated navigation even on residential IP + real Chrome).
 - **CDP open-tabs = the scrape that actually works** — Akamai blocks any Playwright-*navigated* page (403), but not a human-navigated one. So: user starts Chrome w/ `--remote-debugging-port=9222`, browses to product pages by hand (clearing challenges), sets `CDP_URL`; app connects via CDP and READS the open tabs' DOM (no navigation). Verified pulling real data.
 - **JSON-LD first in scraper** — schema.org Product is stabler than CSS selectors across redesigns; DOM/meta are fallback.
-- **ChromaDB persistent + local all-MiniLM-L6-v2** — free, offline embeddings; survives restarts (`chroma_db/`).
+- **Supabase (Postgres + pgvector) is the single data store** — replaced local ChromaDB so data is cloud-managed/persistent and shared between the Vercel API and local Mac ingestion. Products (`products` + `product_chunks`), knowledge (`knowledge_docs` + `knowledge_chunks`), settings (`settings`). Retrieval via `match_products`/`match_knowledge` RPCs (cosine, hnsw). RLS on with no policies → only the service-role key (backend) can read/write.
+- **Voyage AI embeddings (`voyage-3.5-lite`, 1024-dim)** — replaced local `sentence-transformers`; a plain API call so the serverless function stays light (no torch). Same model used for indexing + queries. Free 200M-token tier. `EMBED_DIM` must match `supabase_schema.sql`.
+- **All-Vercel deploy** — PWA served static from Vercel CDN; FastAPI runs as a Python serverless function (`api/index.py` mounts the app at `/api`, so routes resolve at `/api/chat` etc.). `vercel.json` builds the frontend + routes `/api/*`, maxDuration 60s (Hobby). Single origin → no CORS, HTTPS for iPhone mic/PWA install. Chat streams to fit the timeout budget.
+- **Ingestion stays local (Mac → Supabase)** — CDP scraping/photo/manual run on the Mac and WRITE to Supabase (outbound only; computer never exposed). The cloud only reads. So scraper deps live in `backend/requirements.txt`, not the cloud `requirements.txt`; `main.py` imports scraper lazily.
+- **PWA** — `vite-plugin-pwa` (Workbox) + web manifest + iOS meta tags → installable via Safari "Add to Home Screen". Icons in `frontend/public/`.
 - **`[PRODUCT_NOT_FOUND]` marker** — Claude emits it when asked product isn't in retrieved context; backend strips it, sets flag → drives on-demand ingestion UI (feature 1c).
 - **Grounding via system prompt** — Claude answers ONLY from CONTEXT block; context injected in user turn (per-turn, not cached system).
 - **Model `claude-sonnet-4-6`** — pinned by spec for chat + vision; overridable via env.
@@ -114,46 +132,45 @@ Stop-self-answer bug); audio unlocked on mic tap (autoplay); animation starts on
 - **Conversation mode** — say "C-Bot" once, then talk freely; ~15s silence → wake-word standby.
 - **Lottie avatar** (`lottie-react`) — PLAYS while speaking, PAUSES while listening. `assets/cbot.json` = user's ericz.json, recolored clothing red + "Major Sales" chest overlay (`.cbot-logo`, tweak `--logo-top`/font-size) + Background layer removed (transparent over store bg). Original backup: `/tmp/cbot.backup.json`.
 - **Chat layout** — character stage (left) over blurred store background image, conversation panel (right), status + all voice buttons in a bottom voice bar. "Listen" button (was "Stop") stops audio+anim and listens.
-- **Knowledge base** — reference docs (policies/rules/returns) in a SEPARATE Chroma collection (`costco_knowledge`); chat retrieves top-4 knowledge chunks + products, prompt distinguishes PRODUCTS vs KNOWLEDGE. Loaded a real Costco returns/policy doc (15 chunks). RTF isn't accepted by the uploader (txt/md/pdf only) — convert via `textutil` first.
+- **Knowledge base** — reference docs (policies/rules/returns) in separate Supabase tables (`knowledge_docs`/`knowledge_chunks`); chat retrieves top-4 knowledge chunks + products, prompt distinguishes PRODUCTS vs KNOWLEDGE. Loaded a real Costco returns/policy doc (15 chunks). RTF isn't accepted by the uploader (txt/md/pdf only) — convert via `textutil` first.
 - **Multilingual (en/yue/es/fr)** — 🌐 selector; `/chat` `language` param → Claude answers in it (data stays grounded, translated; item#/brands kept). TTS auto-detects language (ElevenLabs). STT locale = `bcp47For(lang)`. Cantonese = Traditional Chinese text; voice/STT lean Mandarin (weaker).
 - **Bilingual tabs** — non-English shows [lang]|English tabs; each message stored in both languages; backend returns both per turn. "⌨️ Input" toggle: speak/type English while C-Bot answers in the selected language (STT switches to en).
-- **Editable products** — full ProductData stored as `_data` JSON in Chroma metadata → edit (PUT) without re-scraping; re-embeds on save. Fields incl. regular/promo price + `price_valid_until`.
-- **Settings/guidelines** — persisted in `settings.json` (`settings_store`), injected into chat system prompt (category-specific clarifying questions).
+- **Editable products** — full ProductData stored as `data` jsonb in Supabase `products` → edit (PUT) without re-scraping; re-embeds on save. Fields incl. regular/promo price + `price_valid_until`.
+- **Settings/guidelines** — persisted in Supabase `settings` row (`settings_store`), injected into chat system prompt (category-specific clarifying questions).
 - Online only (offline/Ollama idea dropped). Chat + vision = Claude Sonnet 4.6.
-- **Vite `/api` proxy** — same-origin dev, no CORS friction. Mic needs HTTPS on non-localhost (Safari).
+- **Vite `/api` proxy** — same-origin dev, no CORS friction. Mic needs HTTPS on non-localhost (Safari) → satisfied by the Vercel HTTPS domain in prod.
 
 ## 4. Status
-Fully built & running locally (user's Mac). Backend has real data: 7 products (incl. 3 real TVs via CDP open-tabs) + a Costco returns/policy knowledge doc.
-- **Verified live** (backend TestClient / running server): chat (grounded, compare, not-found), editable products (`PUT`), settings/guidelines, knowledge add→retrieve→delete + policy Q&A, **multilingual chat** (es/fr/yue) + **bilingual** response (answer+answer_en, question both langs), **TTS** (`/tts` 200 MP3, River voice). Frontend builds clean every change.
-- **Costco scraping**: works ONLY via **CDP open-tabs** (user opens product pages by hand in `--remote-debugging-port=9222` Chrome; app reads DOM). Automated `/index` & `/index/url` still 403 (Akamai blocks Playwright navigation even on residential IP). Samples/manual/photo are always-on fallbacks.
-- **⚠️ Backend must be restarted** to pick up the latest multilingual/bilingual `/chat` changes (rag/models/main) — user was told.
-- **Browser-not-verified-by-me** (need a live browser): Lottie render, voice end-to-end after the many fixes, bilingual tabs/toggle, store-bg layout. User is testing iteratively and reporting.
-- Recent voice fixes (all shipped): never-deaf recognizer, half-duplex + flush-on-speech-end (Stop no longer self-answers), autoplay unlock (ElevenLabs plays on voice-triggered replies), animation↔audio sync via `onplaying`.
-- Known constraints: Python 3.14 wheels may fail (use 3.11–3.13, `.venv` is 3.13); voice best in Chrome/Edge (Safari STT unreliable); Cantonese voice/STT lean Mandarin; mic needs HTTPS off-localhost.
-- No git repo (user declined `git init`).
+Code migrated from local ChromaDB/sentence-transformers to **Supabase (pgvector) + Voyage embeddings**, and prepped for **all-Vercel serverless deploy** + **PWA**. All backend modules compile; `supabase` installed in `.venv` (2.31.0, no httpx conflict). Prior real data (7 products incl. 3 real TVs via CDP open-tabs + a Costco returns/policy doc) still lives in local `chroma_db/` awaiting migration.
+- **PENDING user setup** (blocks testing): create Supabase schema (`backend/supabase_schema.sql`), get a Voyage key, set `SUPABASE_URL`/`SUPABASE_SERVICE_KEY`/`VOYAGE_API_KEY` in `backend/.env`. Then run `migrate_to_supabase.py`.
+- **NOT yet verified against Supabase**: chat/retrieval, products, knowledge, settings (all rewritten, compile-clean, but need live creds). Pre-migration these were verified live on the old Chroma stack (chat grounded/compare/not-found, editable products, guidelines, KB Q&A, multilingual+bilingual, TTS 200 MP3 River).
+- **Deploy pending**: push to GitHub (ezantua@gmail.com), import to Vercel, set env vars (ANTHROPIC/SUPABASE/VOYAGE/ELEVENLABS). Decided all-Vercel + Supabase, Hobby plan.
+- **Costco scraping**: unchanged, LOCAL only via **CDP open-tabs**; cloud never scrapes. Automated `/index`/`/index/url` still 403 (Akamai). Samples/manual/photo are always-on fallbacks.
+- **Browser-not-verified-by-me**: Lottie render, voice end-to-end, bilingual tabs/toggle, store-bg layout, PWA install on iPhone. User tests iteratively.
+- Known constraints: Python 3.11–3.13 (`.venv` is 3.13); voice best in Chrome/Edge (Safari STT unreliable); Cantonese voice/STT lean Mandarin.
+- **Git**: repo initialized; 1 commit (`5f4ea4f`, .env excluded/verified). Not yet pushed to GitHub. `gh` CLI not installed (user declined brew install — switched to cloud plan).
 
 ## 5. How to run
-Backend:
+Local (Mac — for dev + ingestion; writes to Supabase):
 ```
-cd backend && python3.13 -m venv .venv && . .venv/bin/activate
-pip install -r requirements.txt && playwright install chromium
-cp .env.example .env   # set ANTHROPIC_API_KEY
+cd backend && . .venv/bin/activate           # 3.13 venv exists; supabase installed
+pip install -r requirements.txt && playwright install chromium   # (scraper)
+cp .env.example .env   # set ANTHROPIC_API_KEY, SUPABASE_URL, SUPABASE_SERVICE_KEY, VOYAGE_API_KEY
+python migrate_to_supabase.py                 # one-time: old chroma_db → Supabase
 uvicorn main:app --reload --port 8000
 ```
-Frontend:
-```
-cd frontend && npm install && npm run dev   # http://localhost:5173
-```
-A py3.13 `backend/.venv` already exists (deps installed; still run `playwright install chromium`).
+Frontend (dev): `cd frontend && npm install && npm run dev`  → http://localhost:5173
+Cloud deploy: push to GitHub → Vercel "Import Project" (auto-detects `vercel.json`) → set env vars in Vercel → deploy. `api/` + root `requirements.txt` = the serverless API; `frontend/dist` = static PWA.
 
 ## 6. Environment
-- `.env` (backend): `ANTHROPIC_API_KEY` (required). Optional: `CHAT_MODEL`, `VISION_MODEL`,
-  `EMBED_MODEL`, `CHROMA_DIR`, `SCRAPE_DELAY_SECONDS`, `COSTCO_BASE`, `TOP_K`, `CORS_ORIGINS`,
-  `STEALTH_MODE`, `HEADLESS`, `CHROME_CHANNEL`, `USER_DATA_DIR`, `CDP_URL`,
-  `ELEVENLABS_API_KEY` (TTS), `TTS_PROVIDER`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`, `OPENAI_API_KEY`.
-- CDP scraping: start Chrome via `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" --remote-debugging-port=9222 --user-data-dir="$HOME/.costco-chrome"`, browse to products by hand, set `CDP_URL=http://localhost:9222`, use "Read open Costco tab(s)".
-- `backend/settings.json` (git-ignored) holds editable AI guidelines; created on first PUT /settings, else defaults from `settings_store.DEFAULT_GUIDELINES`.
-- Deps: Python 3.11–3.13 (fastapi, uvicorn, anthropic, chromadb, sentence-transformers,
-  playwright, beautifulsoup4, httpx, pypdf); Node 18+ (react, vite, lottie-react). First run downloads embed model (~90MB).
+- `.env` (backend, LOCAL): `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `VOYAGE_API_KEY` (required).
+  Optional: `VOYAGE_MODEL`, `EMBED_DIM` (must match schema), `CHAT_MODEL`, `VISION_MODEL`, `TOP_K`, `CORS_ORIGINS`,
+  `SCRAPE_DELAY_SECONDS`, `COSTCO_BASE`, `STEALTH_MODE`, `HEADLESS`, `CHROME_CHANNEL`, `USER_DATA_DIR`, `CDP_URL`,
+  `ELEVENLABS_API_KEY`/`ELEVENLABS_API_KEYS`, `TTS_PROVIDER`, `ELEVENLABS_VOICE_ID`, `ELEVENLABS_MODEL`, `OPENAI_API_KEY`.
+  `EMBED_MODEL`/`CHROMA_DIR` are legacy — only `migrate_to_supabase.py` reads them.
+- **Vercel env vars** (same keys minus scraper/CDP): `ANTHROPIC_API_KEY`, `SUPABASE_URL`, `SUPABASE_SERVICE_KEY`, `VOYAGE_API_KEY`, `ELEVENLABS_API_KEY(S)`, `TTS_PROVIDER`.
+- Supabase: run `backend/supabase_schema.sql` once (enables pgvector, tables, `match_*` functions, RLS). Service-role key is server-side only.
+- CDP scraping (local): start Chrome `--remote-debugging-port=9222 --user-data-dir="$HOME/.costco-chrome"`, browse to products by hand, set `CDP_URL=http://localhost:9222`, use "Read open Costco tab(s)".
+- Deps: cloud (`requirements.txt`) = fastapi, anthropic, supabase, httpx, pypdf, pydantic, python-multipart. Local (`backend/requirements.txt`) adds uvicorn, playwright, beautifulsoup4, + chromadb/sentence-transformers (migration only). Node 18+ (react, vite, vite-plugin-pwa, lottie-react).
 - Knowledge docs: uploader takes txt/md/pdf. For .rtf, convert first: `textutil -convert txt -stdout file.rtf`.
 ```

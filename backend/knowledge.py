@@ -1,30 +1,16 @@
 """Reference-document knowledge base (Costco rules, policies, FAQs, etc.).
 
-Documents are chunked, embedded, and stored in a separate Chroma collection
-(shares the client + embedder with rag.py). Chat retrieval pulls relevant
-chunks alongside product data so C-Bot can answer policy/membership/return
-questions grounded in these docs.
+Documents are chunked, embedded (Voyage), and stored in Supabase
+(knowledge_docs + knowledge_chunks). Chat retrieval pulls relevant chunks
+alongside product data so C-Bot can answer policy/membership/return questions
+grounded in these docs.
 """
 import io
 import re
 import uuid
 
-import rag
-
-KNOWLEDGE_COLLECTION = "costco_knowledge"
-
-_kcol = None
-
-
-def get_kcollection():
-    global _kcol
-    if _kcol is None:
-        _kcol = rag.chroma_client().get_or_create_collection(
-            name=KNOWLEDGE_COLLECTION,
-            embedding_function=rag.embedding_function(),
-            metadata={"hnsw:space": "cosine"},
-        )
-    return _kcol
+import db
+import embeddings
 
 
 def _chunk_text(text: str, target: int = 900, hard_max: int = 1600) -> list[str]:
@@ -77,50 +63,47 @@ def add_document(title: str, text: str, source: str = "") -> dict:
 
     doc_id = uuid.uuid4().hex[:12]
     title = (title or "Untitled document").strip()
-    collection = get_kcollection()
-    collection.add(
-        ids=[f"{doc_id}-{i}" for i in range(len(chunks))],
-        documents=chunks,
-        metadatas=[
-            {"doc_id": doc_id, "title": title, "source": source, "chunk": i}
-            for i in range(len(chunks))
-        ],
-    )
+    sb = db.client()
+    sb.table("knowledge_docs").insert(
+        {"doc_id": doc_id, "title": title, "source": source, "chunks": len(chunks)}
+    ).execute()
+
+    vectors = embeddings.embed(chunks, input_type="document")
+    rows = [
+        {"doc_id": doc_id, "title": title, "content": chunk, "embedding": vec}
+        for chunk, vec in zip(chunks, vectors)
+    ]
+    sb.table("knowledge_chunks").insert(rows).execute()
     return {"doc_id": doc_id, "title": title, "source": source, "chunks": len(chunks)}
 
 
 def list_documents() -> list[dict]:
-    data = get_kcollection().get(include=["metadatas"])
-    docs: dict[str, dict] = {}
-    for meta in data.get("metadatas") or []:
-        did = meta.get("doc_id")
-        if not did:
-            continue
-        if did not in docs:
-            docs[did] = {
-                "doc_id": did,
-                "title": meta.get("title", ""),
-                "source": meta.get("source", ""),
-                "chunks": 0,
-            }
-        docs[did]["chunks"] += 1
-    return list(docs.values())
+    rows = (
+        db.client()
+        .table("knowledge_docs")
+        .select("doc_id, title, source, chunks")
+        .execute()
+        .data
+        or []
+    )
+    return rows
 
 
 def delete_document(doc_id: str) -> None:
-    get_kcollection().delete(where={"doc_id": doc_id})
+    # chunks cascade-delete via the FK.
+    db.client().table("knowledge_docs").delete().eq("doc_id", doc_id).execute()
 
 
 def retrieve(query: str, k: int = 4) -> list[tuple[str, str]]:
     """Return up to k (chunk_text, doc_title) relevant to the query."""
-    collection = get_kcollection()
-    if collection.count() == 0:
+    query_vec = embeddings.embed_query(query)
+    if not query_vec:
         return []
-    res = collection.query(
-        query_texts=[query],
-        n_results=min(k, collection.count()),
-        include=["documents", "metadatas"],
+    rows = (
+        db.client()
+        .rpc("match_knowledge", {"query_embedding": query_vec, "match_count": k})
+        .execute()
+        .data
+        or []
     )
-    docs = (res.get("documents") or [[]])[0]
-    metas = (res.get("metadatas") or [[]])[0]
-    return [(d, m.get("title", "")) for d, m in zip(docs, metas)]
+    return [(r.get("content", ""), r.get("title", "")) for r in rows]

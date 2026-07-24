@@ -1,12 +1,16 @@
+# LOCAL / full set — run on your Mac for ingestion (scraping) + one-time migration.
+# The cloud (Vercel) uses the lighter top-level ../requirements.txt instead.
 fastapi==0.115.6
 uvicorn[standard]==0.34.0
 python-dotenv==1.0.1
 python-multipart==0.0.20
 pydantic==2.10.4
 anthropic==0.69.0
-chromadb==0.5.23
-sentence-transformers==3.3.1
-playwright==1.49.1
-beautifulsoup4==4.12.3
+supabase>=2.9,<3
 httpx==0.28.1
 pypdf==5.1.0
+playwright==1.49.1
+beautifulsoup4==4.12.3
+# Only needed by migrate_to_supabase.py to read the OLD local store (remove after).
+chromadb==0.5.23
+sentence-transformers==3.3.1

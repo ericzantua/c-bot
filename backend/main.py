@@ -29,7 +29,10 @@ from models import (
     TTSRequest,
     UrlIndexRequest,
 )
-from scraper import ScrapeError, scrape_open_tabs, scrape_products, scrape_urls
+
+# NOTE: scraper (Playwright/BeautifulSoup) is imported lazily inside the index
+# endpoints so the cloud/serverless deploy loads without those heavy deps —
+# scraping only runs on a local machine with a browser.
 
 app = FastAPI(title="C-Bot — Costco Product RAG API", version="1.0.0")
 
@@ -44,6 +47,8 @@ app.add_middleware(
 
 def _index_scraped(labels: list[str], scraped: list) -> list[IndexResult]:
     """Store scraped products; ``labels`` identify each entry in error results."""
+    from scraper import ScrapeError  # lazy: keeps Playwright out of the cloud deploy
+
     results: list[IndexResult] = []
     for label, outcome in zip(labels, scraped):
         if isinstance(outcome, ScrapeError):
@@ -69,6 +74,8 @@ def _index_scraped(labels: list[str], scraped: list) -> list[IndexResult]:
 def _ingest(item_codes: list[str]) -> list[IndexResult]:
     """Scrape by item code → chunk → embed → store; return per-item results."""
     import asyncio
+
+    from scraper import scrape_products
 
     codes = [c.strip() for c in item_codes if c.strip()]
     if not codes:
@@ -114,6 +121,8 @@ def index_url(req: UrlIndexRequest) -> IndexResponse:
     """Scrape + index products from full costco.ca product URLs."""
     import asyncio
 
+    from scraper import scrape_urls
+
     urls = [u.strip() for u in req.urls if u.strip()]
     if not urls:
         raise HTTPException(status_code=400, detail="No URLs provided.")
@@ -124,6 +133,8 @@ def index_url(req: UrlIndexRequest) -> IndexResponse:
 def index_open_tabs() -> IndexResponse:
     """Index Costco product pages currently open in the CDP Chrome (read-only)."""
     import asyncio
+
+    from scraper import scrape_open_tabs
 
     scraped = asyncio.run(scrape_open_tabs())
     labels = [d.item_code if isinstance(d, ProductData) else "open tab" for d in scraped]

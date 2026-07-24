@@ -1,11 +1,9 @@
 """Persistent, user-editable app settings (currently: AI answering guidelines).
 
-Stored as JSON on disk so edits survive restarts. Edited via GET/PUT /settings.
+Stored in Supabase (single `settings` row) so edits survive restarts and are
+shared between the cloud API and local ingestion. Edited via GET/PUT /settings.
 """
-import json
-import os
-
-SETTINGS_PATH = os.path.join(os.path.dirname(__file__), "settings.json")
+import db
 
 DEFAULT_GUIDELINES = (
     "Before recommending a product, ask ONE or TWO brief clarifying questions "
@@ -20,21 +18,23 @@ DEFAULT_GUIDELINES = (
 )
 
 
-def _load() -> dict:
-    try:
-        with open(SETTINGS_PATH, encoding="utf-8") as f:
-            return json.load(f)
-    except (FileNotFoundError, json.JSONDecodeError, OSError):
-        return {}
-
-
 def get_guidelines() -> str:
-    return _load().get("answer_guidelines") or DEFAULT_GUIDELINES
+    rows = (
+        db.client()
+        .table("settings")
+        .select("answer_guidelines")
+        .eq("id", 1)
+        .limit(1)
+        .execute()
+        .data
+        or []
+    )
+    stored = rows[0].get("answer_guidelines") if rows else None
+    return stored or DEFAULT_GUIDELINES
 
 
 def set_guidelines(text: str) -> str:
-    data = _load()
-    data["answer_guidelines"] = text
-    with open(SETTINGS_PATH, "w", encoding="utf-8") as f:
-        json.dump(data, f, indent=2)
+    db.client().table("settings").upsert(
+        {"id": 1, "answer_guidelines": text}
+    ).execute()
     return get_guidelines()

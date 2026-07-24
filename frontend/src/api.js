@@ -1,6 +1,6 @@
-// Thin API client. In dev, requests go through Vite's /api proxy to the backend;
-// in the production build (served by FastAPI itself) they're same-origin.
-const BASE = import.meta.env.DEV ? "/api" : "";
+// Thin API client. Everything is under /api: in dev, Vite proxies /api → the
+// local backend; in production, Vercel routes /api/* to the serverless API.
+const BASE = "/api";
 
 async function handle(res) {
   if (!res.ok) {
