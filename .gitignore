@@ -1,0 +1,29 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+env/
+
+# Secrets
+.env
+
+# Local editable settings
+backend/settings.json
+
+# Local data
+chroma_db/
+backend/chroma_db/
+.pw_profile/
+backend/.pw_profile/
+
+# Node / frontend
+node_modules/
+dist/
+.vite/
+
+# OS / editor
+.DS_Store
+*.log
+.idea/
+.vscode/
