@@ -31,8 +31,14 @@ export default defineConfig({
         ],
       },
       workbox: {
-        // Don't cache API calls; network-first for everything dynamic.
-        navigateFallbackDenylist: [/^\/(chat|products|index|tts|settings|knowledge|health)/],
+        // The whole site is behind HTTP Basic Auth (middleware.js). Do NOT let the
+        // service worker serve a cached app shell to an unauthenticated user:
+        //   - never precache index.html (globIgnores), and
+        //   - don't fall back to it for navigations (navigateFallback: null)
+        // so every page load hits the network and the auth gate runs. This is an
+        // online-only app (chat/RAG needs the API), so there's no offline shell to lose.
+        navigateFallback: null,
+        globIgnores: ["**/index.html"],
         maximumFileSizeToCacheInBytes: 6 * 1024 * 1024, // store-bg.png is ~3MB
       },
     }),
