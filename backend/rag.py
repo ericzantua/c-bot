@@ -189,6 +189,9 @@ _LANG_NAMES = {
     "fr": "French",
     "hi": "Hindi",
     "it": "Italian",
+    "ja": "Japanese",
+    "ko": "Korean",
+    "pt": "Portuguese",
 }
 
 
