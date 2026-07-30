@@ -146,7 +146,7 @@ Stop-self-answer bug); audio unlocked on mic tap (autoplay); animation starts on
 - **Vite `/api` proxy** — same-origin dev, no CORS friction. Mic needs HTTPS on non-localhost (Safari) → satisfied by the Vercel HTTPS domain in prod.
 
 ## 4. Status
-Migrated from local ChromaDB/sentence-transformers to **Supabase (pgvector) + Voyage embeddings**; prepped for **all-Vercel serverless deploy** + **PWA**.
+**LIVE in production at https://c-bot-two.vercel.app** — all-Vercel (PWA + Python serverless) + Supabase (pgvector) + Voyage embeddings, private behind a cookie login with editable admin/user accounts, 9 languages, mobile-tuned PWA. Details below.
 - **DONE — Supabase migration + verified live**: schema run in project `c-bot` (ref `eumhtymlowchfitvetho`); `migrate_to_supabase.py` loaded **7 products + 1 returns/policy doc (13 chunks)**. Verified end-to-end against Supabase: product retrieval + compare (citations correct), knowledge/policy Q&A — both grounded via Voyage query-embed → pgvector RPC → Claude. Settings on Supabase row.
 - **Voyage free-tier rate limit (⚠️)**: no-payment-method accounts get ~3 req/min. Migration is paced (`MIGRATE_DELAY=25s`); `embeddings.embed` has 429 backoff; `rag.chat` now embeds the query ONCE (reused for product + knowledge retrieval). For real usage the user should **add a payment method to Voyage** (raises RPM; first 200M tokens still free).
 - **GitHub — DONE**: pushed to `github.com/ericzantua/c-bot` (main). Credential helper = osxkeychain. (User pasted a PAT in chat once → advised to revoke.)
@@ -160,7 +160,8 @@ Migrated from local ChromaDB/sentence-transformers to **Supabase (pgvector) + Vo
 - **Mobile/tablet UI pass (DONE, user-tested on iPhone)**: added responsive tiers + iOS safe-area/`100dvh`/input-zoom fixes; removed the topnav brand; renamed Chat tab → "Z-Bot"; removed the bottom voice-status text; shortened the chat stage and seated the avatar flush at the bottom; "Major Sales" logo scaled for mobile + recolored white. See the Responsive and Lottie-avatar decisions above.
 - **Browser-not-verified-by-me**: voice end-to-end, bilingual tabs/toggle, PWA install on iPhone. User tests iteratively (mobile layout already iterated on device).
 - Known constraints: Python 3.11–3.13 (`.venv` is 3.13); voice best in Chrome/Edge (Safari STT unreliable); Cantonese voice/STT lean Mandarin.
-- **Git**: repo initialized; 1 commit (`5f4ea4f`, .env excluded/verified). Not yet pushed to GitHub. `gh` CLI not installed (user declined brew install — switched to cloud plan).
+- **Multilingual + bilingual fix (DONE, verified live)**: 9 languages (en/yue/es/fr/hi/it/ja/ko/pt). Non-English chat uses a forced `provide_bilingual_answer` tool call so both language versions always return (fixed the intermittently-blank English tab). Add a new language in BOTH `frontend/src/languages.js` and `backend/rag.py` `_LANG_NAMES`.
+- **Git**: pushed to `github.com/ericzantua/c-bot` (main); credential helper = osxkeychain. Deploys via `vercel --prod` from the repo ROOT (running it from `frontend/` once created a stray `frontend` project — since deleted). `.env`/`.vercel`/`.env.local` gitignored (no secrets committed — verified with `git grep`).
 
 ## 5. How to run
 Local (Mac — for dev + ingestion; writes to Supabase):
