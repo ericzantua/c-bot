@@ -95,6 +95,22 @@ body {
   background: #fff;
   cursor: pointer;
 }
+.logout-link {
+  margin-left: 12px;
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+  text-decoration: none;
+  padding: 7px 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+.logout-link:hover {
+  background: #fdecea;
+  color: var(--err);
+  border-color: #f6c9c4;
+}
 .view {
   flex: 1;
   min-height: 0;
@@ -857,6 +873,11 @@ button.secondary:hover:not(:disabled) {
   .lang-select select {
     padding: 5px 6px;
     font-size: 12.5px;
+  }
+  .logout-link {
+    margin-left: 8px;
+    padding: 5px 9px;
+    font-size: 12px;
   }
 
   .chat-main {

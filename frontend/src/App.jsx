@@ -56,6 +56,9 @@ export default function App() {
             ))}
           </select>
         </label>
+        <a className="logout-link" href="/logout" title="Sign out">
+          Log&nbsp;out
+        </a>
       </header>
 
       <div className="view">

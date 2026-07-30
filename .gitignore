@@ -30,3 +30,5 @@ dist/
 *.log
 .idea/
 .vscode/
+.vercel
+.env*.local
