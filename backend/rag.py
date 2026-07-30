@@ -187,18 +187,9 @@ _LANG_NAMES = {
     "yue": "Cantonese, written in Traditional Chinese characters",
     "es": "Spanish",
     "fr": "French",
+    "hi": "Hindi",
+    "it": "Italian",
 }
-
-
-def _parse_json_obj(text: str) -> dict:
-    start = text.find("{")
-    end = text.rfind("}")
-    if start != -1 and end > start:
-        try:
-            return json.loads(text[start : end + 1])
-        except (json.JSONDecodeError, ValueError):
-            pass
-    return {}
 
 
 def chat(
@@ -262,28 +253,55 @@ def chat(
             citations = []
         return answer, answer, question, question, citations, not_found
 
-    # Non-English: one call producing both languages (for the two-tab UI).
-    lang_name = _LANG_NAMES.get(language, "English")
+    # Non-English: one call producing both languages via a FORCED tool call. The
+    # SDK returns tool_use.input as a validated dict, so the English field always
+    # comes back structured — this replaces free-text JSON parsing, which
+    # intermittently failed (truncation / stray braces) and left the English tab
+    # blank or showing the foreign text.
+    lang_name = _LANG_NAMES.get(language, language)
     system += (
         f"\n\nBILINGUAL OUTPUT: The shopper is using {lang_name}. IGNORE the earlier "
-        f"instruction about the {NOT_FOUND_MARKER} token. Instead reply with ONLY a "
-        "JSON object (no code fence, no extra text) with these exact keys:\n"
-        f'  "answer_foreign": your full reply written in {lang_name};\n'
-        '  "answer_en": the exact same reply written in English;\n'
-        f'  "question_foreign": the user\'s question written in {lang_name};\n'
-        '  "question_en": the user\'s question written in English;\n'
-        '  "product_not_found": true only if the user asked about a PRODUCT that is '
-        "not in the PRODUCTS context (then answer_* should say you don't have that "
-        "product yet and ask for its Costco item number), otherwise false.\n"
-        "Keep brand names, product names, and Costco item numbers unchanged. Apply "
-        "all the grounding and guideline rules above when composing the reply."
+        f"instruction about the {NOT_FOUND_MARKER} token. Instead, ALWAYS reply by calling "
+        "the `provide_bilingual_answer` tool, filling every field. Keep brand names, product "
+        "names, and Costco item numbers unchanged across both languages. Apply all the "
+        "grounding and guideline rules above when composing the reply."
     )
+    tool = {
+        "name": "provide_bilingual_answer",
+        "description": "Return the assistant's reply and the user's question, each in both languages.",
+        "input_schema": {
+            "type": "object",
+            "properties": {
+                "answer_foreign": {"type": "string", "description": f"The full reply written in {lang_name}."},
+                "answer_en": {"type": "string", "description": "The exact same reply written in English."},
+                "question_foreign": {"type": "string", "description": f"The user's question written in {lang_name}."},
+                "question_en": {"type": "string", "description": "The user's question written in English."},
+                "product_not_found": {
+                    "type": "boolean",
+                    "description": (
+                        "True only if the user asked about a PRODUCT not present in the PRODUCTS "
+                        "context (then the answers should say you don't have it yet and ask for its "
+                        "Costco item number); otherwise false."
+                    ),
+                },
+            },
+            "required": ["answer_foreign", "answer_en", "question_foreign", "question_en", "product_not_found"],
+        },
+    }
     response = client.messages.create(
-        model=config.CHAT_MODEL, max_tokens=3000, system=system, messages=messages
+        model=config.CHAT_MODEL,
+        max_tokens=4096,
+        system=system,
+        messages=messages,
+        tools=[tool],
+        tool_choice={"type": "tool", "name": "provide_bilingual_answer"},
     )
-    raw = "".join(b.text for b in response.content if b.type == "text").strip()
-    data = _parse_json_obj(raw)
-    answer_foreign = (data.get("answer_foreign") or "").strip() or raw
+    data = next(
+        (b.input for b in response.content
+         if b.type == "tool_use" and b.name == "provide_bilingual_answer"),
+        {},
+    )
+    answer_foreign = (data.get("answer_foreign") or "").strip()
     answer_en = (data.get("answer_en") or "").strip() or answer_foreign
     q_foreign = (data.get("question_foreign") or question).strip()
     q_en = (data.get("question_en") or question).strip()

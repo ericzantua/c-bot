@@ -5,6 +5,8 @@ export const LANGUAGES = [
   { code: "yue", label: "中文（廣東話）", bcp47: "yue-Hant-HK" },
   { code: "es", label: "Español", bcp47: "es-ES" },
   { code: "fr", label: "Français", bcp47: "fr-CA" },
+  { code: "hi", label: "हिन्दी", bcp47: "hi-IN" },
+  { code: "it", label: "Italiano", bcp47: "it-IT" },
 ];
 
 export const bcp47For = (code) =>
