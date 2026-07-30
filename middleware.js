@@ -35,6 +35,24 @@ function parseUsers() {
   return map;
 }
 
+// Admins get the Products/Settings pages + the management APIs. Configure via the
+// AUTH_ADMINS env var (comma-separated usernames); everyone else is a plain user.
+function parseAdmins() {
+  const set = new Set();
+  for (const name of (process.env.AUTH_ADMINS || "").split(",")) {
+    const s = name.trim();
+    if (s) set.add(s);
+  }
+  return set;
+}
+
+function jsonResponse(obj, status) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
 // Constant-time string compare so a wrong password can't be timing-guessed.
 function safeEqual(a, b) {
   if (typeof a !== "string" || typeof b !== "string") return false;
@@ -196,13 +214,22 @@ export default async function middleware(request) {
   }
 
   // --- everything else requires a valid session ---
-  if (await verifySession(getCookie(request, COOKIE))) return; // authenticated → continue
-
-  if (path.startsWith("/api/")) {
-    return new Response(JSON.stringify({ detail: "Not authenticated" }), {
-      status: 401,
-      headers: { "content-type": "application/json", "Cache-Control": "no-store" },
-    });
+  const user = await verifySession(getCookie(request, COOKIE));
+  if (!user) {
+    if (path.startsWith("/api/")) return jsonResponse({ detail: "Not authenticated" }, 401);
+    return new Response(null, { status: 303, headers: { Location: "/login", "Cache-Control": "no-store" } });
   }
-  return new Response(null, { status: 303, headers: { Location: "/login", "Cache-Control": "no-store" } });
+
+  const admin = parseAdmins().has(user);
+
+  // Identity probe for the SPA (the session cookie is HttpOnly, so JS can't read it).
+  if (path === "/api/me") return jsonResponse({ user, admin }, 200);
+
+  // Admin-only APIs: product management, ingestion, settings, knowledge base.
+  // (Plain users keep /api/chat, /api/tts, /api/health, /api/me.)
+  if (!admin && /^\/api\/(settings|products|index|knowledge)/.test(path)) {
+    return jsonResponse({ detail: "Admin access required." }, 403);
+  }
+
+  return; // authenticated → continue
 }

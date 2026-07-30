@@ -811,6 +811,37 @@ button.secondary:hover:not(:disabled) {
   color: var(--muted);
   margin-left: auto;
 }
+/* ---------- About page ---------- */
+.about-card {
+  text-align: center;
+}
+.about-brand {
+  font-size: 34px;
+  font-weight: 800;
+  color: var(--accent);
+  margin-bottom: 2px;
+}
+.about-sub {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  margin: 0 0 18px;
+}
+.about-body {
+  text-align: left;
+  font-size: 15px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+}
+.about-foot {
+  color: var(--muted);
+  font-size: 13px;
+  margin: 20px 0 0;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+}
+
 .guidelines-input {
   width: 100%;
   margin-top: 12px;

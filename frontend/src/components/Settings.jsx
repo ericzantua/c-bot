@@ -8,7 +8,7 @@ import {
   saveSettings,
 } from "../api";
 
-export default function Settings() {
+export default function Settings({ onShowAbout }) {
   const [guidelines, setGuidelines] = useState("");
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -96,6 +96,16 @@ export default function Settings() {
 
   return (
     <div className="settings-page">
+      <div className="settings-card">
+        <h2>About</h2>
+        <p className="hint">App information and credits.</p>
+        <div className="settings-foot">
+          <button className="secondary" onClick={onShowAbout}>
+            Open About page
+          </button>
+        </div>
+      </div>
+
       <div className="settings-card">
         <h2>AI answering guidance</h2>
         <p className="hint">

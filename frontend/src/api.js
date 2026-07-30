@@ -16,6 +16,12 @@ async function handle(res) {
   return res.json();
 }
 
+// Who am I? Returns { user, admin } from the auth middleware (the session cookie
+// is HttpOnly, so the SPA asks the server instead of reading it).
+export async function getMe() {
+  return handle(await fetch(`${BASE}/me`));
+}
+
 export async function indexCodes(itemCodes) {
   const res = await fetch(`${BASE}/index`, {
     method: "POST",
