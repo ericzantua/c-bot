@@ -6,7 +6,7 @@ import { listProducts } from "./api";
 import { LANGUAGES } from "./languages";
 
 const TABS = [
-  { id: "chat", label: "Chat" },
+  { id: "chat", label: "Z-Bot" },
   { id: "products", label: "Products" },
   { id: "settings", label: "Settings" },
 ];
@@ -32,7 +32,6 @@ export default function App() {
   return (
     <div className="app">
       <header className="topnav">
-        <span className="brand">🛒 C-Bot</span>
         <nav className="tabs">
           {TABS.map((t) => (
             <button

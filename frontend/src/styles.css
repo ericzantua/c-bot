@@ -22,12 +22,16 @@ body {
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   color: var(--ink);
   background: var(--bg);
+  overflow-x: hidden;
+  overscroll-behavior-y: none; /* no rubber-band / pull-to-refresh in the PWA */
+  -webkit-text-size-adjust: 100%;
 }
 
 .app {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  height: 100dvh; /* track mobile browser chrome so nothing is clipped */
 }
 
 /* ---------- top nav ---------- */
@@ -36,6 +40,10 @@ body {
   align-items: center;
   gap: 24px;
   padding: 10px 20px;
+  /* clear the iOS notch / status bar under viewport-fit=cover */
+  padding-top: max(10px, env(safe-area-inset-top));
+  padding-left: max(20px, env(safe-area-inset-left));
+  padding-right: max(20px, env(safe-area-inset-right));
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   flex-shrink: 0;
@@ -288,6 +296,7 @@ button.secondary:hover:not(:disabled) {
   justify-content: center;
   gap: 14px;
   padding: 12px 20px;
+  padding-bottom: max(12px, env(safe-area-inset-bottom)); /* clear iOS home indicator */
   border-top: 1px solid var(--border);
   background: var(--panel);
 }
@@ -526,7 +535,7 @@ button.secondary:hover:not(:disabled) {
   left: 50%;
   top: var(--logo-top);
   transform: translate(-50%, -50%);
-  color: #141414;
+  color: #fff;
   font-family: "Arial Narrow", "Helvetica Neue", Arial, sans-serif;
   font-weight: 800;
   font-size: 15px;
@@ -801,24 +810,117 @@ button.secondary:hover:not(:disabled) {
 }
 
 /* ---------- responsive ---------- */
+
+/* Tablet (portrait iPad and similar): keep the two-pane chat, but let the
+   conversation flex instead of a hard 420px, and shrink the fixed panels. */
+@media (min-width: 861px) and (max-width: 1024px) {
+  .chat-convo {
+    width: clamp(300px, 40vw, 420px);
+  }
+  .cbot-lottie {
+    width: 400px;
+    height: 288px;
+  }
+  .ingest-panel {
+    width: 280px;
+  }
+  .product-grid {
+    grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  }
+  .settings-page {
+    padding: 24px;
+  }
+}
+
+/* Phone / narrow: stack chat vertically, stage on top and capped so the
+   conversation gets the room, single-column product + settings panels. */
 @media (max-width: 860px) {
+  .topnav {
+    gap: 12px;
+    padding-left: max(14px, env(safe-area-inset-left));
+    padding-right: max(14px, env(safe-area-inset-right));
+  }
+  .topnav .brand {
+    font-size: 17px;
+  }
+  .nav-tab {
+    padding: 6px 9px;
+    font-size: 12.5px;
+  }
+  .tab-badge {
+    font-size: 10px;
+    padding: 1px 6px;
+  }
+  .lang-select {
+    gap: 4px;
+  }
+  .lang-select select {
+    padding: 5px 6px;
+    font-size: 12.5px;
+  }
+
   .chat-main {
     flex-direction: column;
   }
+  .chat-stage {
+    flex: 0 0 20vh; /* fixed strip taller than the avatar → room above it */
+    height: 20vh;
+    padding: 0 12px;
+    align-items: flex-end; /* avatar rests on the bottom of the background */
+    overflow: hidden;
+  }
   .chat-convo {
     width: 100%;
-    flex-shrink: 1;
+    flex: 1 1 auto;
+    height: auto;
+    min-height: 0;
     border-left: none;
     border-top: 1px solid var(--border);
-    height: 50vh;
-  }
-  .chat-stage {
-    padding: 16px;
   }
   .cbot-lottie {
-    width: 280px;
-    height: 202px;
+    width: min(195px, 52vw); /* shorter than the stage so it drops to the bottom */
+    height: auto;
+    aspect-ratio: 386 / 278;
   }
+  /* pull the avatar down so its transparent base is clipped → no gap at bottom */
+  .cbot {
+    gap: 0;
+    margin-bottom: -16px;
+  }
+  /* logo font is sized for the 500px desktop avatar — scale it to the vest here */
+  .cbot-logo {
+    font-size: 8px;
+    letter-spacing: 0;
+  }
+  .cbot-status {
+    font-size: 13px;
+  }
+
+  .messages {
+    padding: 12px 14px;
+  }
+  .msg {
+    max-width: 90%;
+  }
+  .composer {
+    padding: 12px 14px;
+    padding-bottom: max(12px, env(safe-area-inset-bottom));
+  }
+
+  /* iOS zooms the page when a focused input is < 16px — bump touch inputs. */
+  textarea,
+  .composer input,
+  input[type="text"],
+  .field input,
+  .field textarea {
+    font-size: 16px;
+  }
+  /* Larger tap targets on touch screens. */
+  button,
+  .file-btn {
+    padding: 11px 15px;
+  }
+
   .products-page {
     flex-direction: column;
   }
@@ -827,7 +929,45 @@ button.secondary:hover:not(:disabled) {
     border-right: none;
     border-bottom: 1px solid var(--border);
   }
-  .msg {
-    max-width: 90%;
+  .product-list {
+    padding: 16px;
+    padding-bottom: max(16px, env(safe-area-inset-bottom));
+  }
+  .product-grid {
+    grid-template-columns: 1fr;
+  }
+  .settings-page {
+    padding: 18px;
+    padding-bottom: max(18px, env(safe-area-inset-bottom));
+  }
+  .settings-card {
+    padding: 18px;
+  }
+}
+
+/* Small phones: reclaim horizontal space in dense grids. */
+@media (max-width: 480px) {
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .voice-bar {
+    gap: 10px;
+    padding: 10px 12px;
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+  }
+  .voice-status {
+    flex-basis: 100%;
+    text-align: center;
+    font-size: 13px;
+  }
+}
+
+/* Landscape phones: the stage would eat the screen — hand it back to chat. */
+@media (max-width: 860px) and (orientation: landscape) and (max-height: 500px) {
+  .chat-stage {
+    max-height: 46vh;
+  }
+  .cbot-lottie {
+    width: min(200px, 40vw);
   }
 }
