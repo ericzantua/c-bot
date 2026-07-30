@@ -1,76 +1,24 @@
-// Vercel Edge Middleware — cookie-based login gate for the whole app.
+// Vercel Edge Middleware — cookie-session gate for the whole app.
 //
-// Gates every request (static PWA + /api/*). Unauthenticated visitors are sent
-// to a branded /login page; a correct username+password sets a signed, HttpOnly
-// session cookie that the middleware verifies on every subsequent request. This
-// avoids the browser's native Basic-Auth prompt (which double-prompts and is
-// flaky inside installed PWAs).
+// Gates every request (static PWA + /api/*). Unauthenticated navigations go to a
+// branded /login page; the form POSTs to /api/login, which the FastAPI backend
+// verifies (accounts live in Supabase, editable in Settings) and answers with a
+// signed, HttpOnly session cookie. This middleware only VERIFIES that cookie
+// (HMAC-SHA256 with AUTH_SECRET) — it never sees passwords. The admin flag is
+// carried in the (signature-verified) cookie, so admin-only APIs are gated here
+// with no database lookup.
 //
-// Config (Vercel env vars, never in the repo):
-//   AUTH_USERS   comma-separated "username:password" pairs, e.g. eric:secret,jane:pw2
-//                (avoid ',' and ':' inside passwords — they're the delimiters)
-//   AUTH_SECRET  random string used to HMAC-sign the session cookie
-// Fail-closed: if either is unset, every request gets 503.
+// Config (Vercel env var): AUTH_SECRET — must match the backend's AUTH_SECRET.
+// Fail-closed: if AUTH_SECRET is unset, every request gets 503.
 
 export const config = {
-  // Gate every route except Vercel's internal analytics/insights beacons.
   matcher: ["/((?!_vercel/).*)"],
 };
 
 const COOKIE = "cbot_session";
-const SESSION_DAYS = 30;
 const enc = new TextEncoder();
 
-// ---- credential store -------------------------------------------------------
-function parseUsers() {
-  const map = new Map();
-  const raw = process.env.AUTH_USERS || process.env.BASIC_AUTH_USERS || "";
-  for (const pair of raw.split(",")) {
-    const s = pair.trim();
-    if (!s) continue;
-    const i = s.indexOf(":");
-    if (i <= 0) continue;
-    map.set(s.slice(0, i), s.slice(i + 1));
-  }
-  return map;
-}
-
-// Admins get the Products/Settings pages + the management APIs. Configure via the
-// AUTH_ADMINS env var (comma-separated usernames); everyone else is a plain user.
-function parseAdmins() {
-  const set = new Set();
-  for (const name of (process.env.AUTH_ADMINS || "").split(",")) {
-    const s = name.trim();
-    if (s) set.add(s);
-  }
-  return set;
-}
-
-function jsonResponse(obj, status) {
-  return new Response(JSON.stringify(obj), {
-    status,
-    headers: { "content-type": "application/json", "Cache-Control": "no-store" },
-  });
-}
-
-// Constant-time string compare so a wrong password can't be timing-guessed.
-function safeEqual(a, b) {
-  if (typeof a !== "string" || typeof b !== "string") return false;
-  const ba = enc.encode(a);
-  const bb = enc.encode(b);
-  if (ba.length !== bb.length) return false;
-  let diff = 0;
-  for (let i = 0; i < ba.length; i++) diff |= ba[i] ^ bb[i];
-  return diff === 0;
-}
-
-// ---- signed session cookie (HMAC-SHA256 via Web Crypto) ---------------------
-function b64url(bytes) {
-  const arr = new Uint8Array(bytes);
-  let bin = "";
-  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
-  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
-}
+// ---- signed-cookie verification (HMAC-SHA256 via Web Crypto) ----
 function b64urlToStr(s) {
   return atob(s.replace(/-/g, "+").replace(/_/g, "/"));
 }
@@ -79,6 +27,12 @@ function b64urlToBytes(s) {
   const arr = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
   return arr;
+}
+function b64url(bytes) {
+  const arr = new Uint8Array(bytes);
+  let bin = "";
+  for (let i = 0; i < arr.length; i++) bin += String.fromCharCode(arr[i]);
+  return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 }
 function hmacKey() {
   return crypto.subtle.importKey(
@@ -89,18 +43,13 @@ function hmacKey() {
     ["sign", "verify"]
   );
 }
-async function signSession(username) {
-  const exp = Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000;
-  const payloadB64 = b64url(enc.encode(JSON.stringify({ u: username, exp })));
-  const sig = await crypto.subtle.sign("HMAC", await hmacKey(), enc.encode(payloadB64));
-  return `${payloadB64}.${b64url(sig)}`;
-}
 async function verifySession(token) {
   if (!token || token.indexOf(".") < 0) return null;
   const [payloadB64, sigB64] = token.split(".");
   let ok = false;
   try {
-    ok = await crypto.subtle.verify("HMAC", await hmacKey(), b64urlToBytes(sigB64), enc.encode(payloadB64));
+    const sig = await crypto.subtle.sign("HMAC", await hmacKey(), enc.encode(payloadB64));
+    ok = b64url(sig) === sigB64;
   } catch {
     return null;
   }
@@ -112,7 +61,7 @@ async function verifySession(token) {
     return null;
   }
   if (!payload || typeof payload.exp !== "number" || Date.now() > payload.exp) return null;
-  return payload.u || null;
+  return payload; // { u, admin, exp }
 }
 
 function getCookie(request, name) {
@@ -124,15 +73,18 @@ function getCookie(request, name) {
   }
   return null;
 }
-function sessionCookie(token) {
-  const maxAge = SESSION_DAYS * 24 * 60 * 60;
-  return `${COOKIE}=${token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=${maxAge}`;
-}
 function clearCookie() {
   return `${COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0`;
 }
 
-// ---- login page -------------------------------------------------------------
+function jsonResponse(obj, status) {
+  return new Response(JSON.stringify(obj), {
+    status,
+    headers: { "content-type": "application/json", "Cache-Control": "no-store" },
+  });
+}
+
+// ---- login page ----
 const HTML_HEADERS = { "content-type": "text/html; charset=utf-8", "Cache-Control": "no-store" };
 
 function loginPage(error) {
@@ -159,7 +111,7 @@ function loginPage(error) {
   button:active{background:var(--dark)}
   .err{background:#fdecea;color:#b42318;border-radius:10px;padding:10px 12px;font-size:13px;margin:14px 0 0}
 </style></head><body>
-<form class="card" method="POST" action="/login" autocomplete="on">
+<form class="card" method="POST" action="/api/login" autocomplete="on">
   <h1 class="brand">🛒 C-Bot</h1>
   <p class="tag">Sign in to continue</p>
   ${err}
@@ -172,40 +124,25 @@ function loginPage(error) {
 </body></html>`;
 }
 
-// ---- request handler --------------------------------------------------------
+// ---- request handler ----
 export default async function middleware(request) {
   const url = new URL(request.url);
   const path = url.pathname;
-  const users = parseUsers();
 
-  if (users.size === 0 || !process.env.AUTH_SECRET) {
+  if (!process.env.AUTH_SECRET) {
     return new Response("Auth not configured.", { status: 503, headers: { "Cache-Control": "no-store" } });
   }
 
-  // --- login route (reachable without a session) ---
+  // Login page (reachable without a session).
   if (path === "/login") {
-    if (request.method === "POST") {
-      const form = await request.formData();
-      const username = (form.get("username") || "").toString();
-      const password = (form.get("password") || "").toString();
-      const expected = users.get(username);
-      if (expected !== undefined && safeEqual(password, expected)) {
-        const token = await signSession(username);
-        return new Response(null, {
-          status: 303,
-          headers: { Location: "/", "Set-Cookie": sessionCookie(token), "Cache-Control": "no-store" },
-        });
-      }
-      return new Response(loginPage("Invalid username or password."), { status: 401, headers: HTML_HEADERS });
-    }
-    // GET: already signed in? skip the form.
     if (await verifySession(getCookie(request, COOKIE))) {
       return new Response(null, { status: 303, headers: { Location: "/", "Cache-Control": "no-store" } });
     }
-    return new Response(loginPage(""), { status: 200, headers: HTML_HEADERS });
+    const err = url.searchParams.get("error") ? "Invalid username or password." : "";
+    return new Response(loginPage(err), { status: 200, headers: HTML_HEADERS });
   }
 
-  // --- logout ---
+  // Logout: clear the cookie.
   if (path === "/logout") {
     return new Response(null, {
       status: 303,
@@ -213,21 +150,23 @@ export default async function middleware(request) {
     });
   }
 
-  // --- everything else requires a valid session ---
-  const user = await verifySession(getCookie(request, COOKIE));
-  if (!user) {
+  // Let the login POST reach the backend unauthenticated (it sets the cookie).
+  if (path === "/api/login") return;
+
+  // Everything else needs a valid session.
+  const payload = await verifySession(getCookie(request, COOKIE));
+  if (!payload) {
     if (path.startsWith("/api/")) return jsonResponse({ detail: "Not authenticated" }, 401);
     return new Response(null, { status: 303, headers: { Location: "/login", "Cache-Control": "no-store" } });
   }
 
-  const admin = parseAdmins().has(user);
+  const admin = !!payload.admin;
 
-  // Identity probe for the SPA (the session cookie is HttpOnly, so JS can't read it).
-  if (path === "/api/me") return jsonResponse({ user, admin }, 200);
+  // Identity probe for the SPA (cookie is HttpOnly, so JS can't read it).
+  if (path === "/api/me") return jsonResponse({ user: payload.u, admin }, 200);
 
-  // Admin-only APIs: product management, ingestion, settings, knowledge base.
-  // (Plain users keep /api/chat, /api/tts, /api/health, /api/me.)
-  if (!admin && /^\/api\/(settings|products|index|knowledge)/.test(path)) {
+  // Admin-only APIs: user management, product management, ingestion, settings, KB.
+  if (!admin && /^\/api\/(users|settings|products|index|knowledge)/.test(path)) {
     return jsonResponse({ detail: "Admin access required." }, 403);
   }
 

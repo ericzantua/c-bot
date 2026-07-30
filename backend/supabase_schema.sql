@@ -51,6 +51,15 @@ create table if not exists settings (
 insert into settings (id, answer_guidelines) values (1, null)
     on conflict (id) do nothing;
 
+-- ---------- App users (login accounts; editable in Settings) ----------
+create table if not exists app_users (
+    username      text primary key,
+    password_hash text not null,          -- pbkdf2_sha256$iterations$salt$hash
+    is_admin      boolean not null default false,
+    updated_at    timestamptz default now()
+);
+alter table app_users enable row level security;
+
 -- ---------- Vector search functions (cosine similarity) ----------
 create or replace function match_products(query_embedding vector(1024), match_count int)
 returns table (item_code text, content text, data jsonb, similarity float)

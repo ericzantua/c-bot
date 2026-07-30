@@ -7,6 +7,7 @@ import {
   listKnowledge,
   saveSettings,
 } from "../api";
+import Users from "./Users";
 
 export default function Settings({ onShowAbout }) {
   const [guidelines, setGuidelines] = useState("");
@@ -105,6 +106,8 @@ export default function Settings({ onShowAbout }) {
           </button>
         </div>
       </div>
+
+      <Users />
 
       <div className="settings-card">
         <h2>AI answering guidance</h2>

@@ -7,6 +7,17 @@ load_dotenv()
 
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
+# --- Auth: cookie login; accounts stored in Supabase `app_users` (editable in Settings) ---
+AUTH_SECRET = os.getenv("AUTH_SECRET", "")  # HMAC key for the session cookie (shared with middleware.js)
+SESSION_COOKIE = "cbot_session"
+SESSION_DAYS = int(os.getenv("SESSION_DAYS", "30"))
+# Secure cookies require HTTPS; set COOKIE_SECURE=false for local http dev.
+COOKIE_SECURE = os.getenv("COOKIE_SECURE", "true").strip().lower() in ("1", "true", "yes", "on")
+# One-time seed for app_users (used ONLY when the table is empty): mirrors the
+# original env-var accounts so eric/w552maj carry over. Ignored once users exist.
+AUTH_USERS_SEED = os.getenv("AUTH_USERS", "")
+AUTH_ADMINS_SEED = os.getenv("AUTH_ADMINS", "")
+
 # The project brief pins chat to Claude Sonnet 4.6; vision reuses the same model.
 CHAT_MODEL = os.getenv("CHAT_MODEL", "claude-sonnet-4-6")
 VISION_MODEL = os.getenv("VISION_MODEL", "claude-sonnet-4-6")

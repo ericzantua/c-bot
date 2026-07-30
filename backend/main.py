@@ -1,6 +1,7 @@
 """C-Bot backend: FastAPI app exposing ingestion, chat, and product endpoints."""
 import os
 
+import auth
 import config
 import knowledge
 import rag
@@ -8,10 +9,11 @@ import samples
 import settings_store
 import tts
 import vision
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import Response
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
+from pydantic import BaseModel
 from models import (
     ChatRequest,
     ChatResponse,
@@ -86,6 +88,112 @@ def _ingest(item_codes: list[str]) -> list[IndexResult]:
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok", "products": rag.count_products()}
+
+
+# ---------------- Auth + user management ----------------
+class UserIn(BaseModel):
+    username: str
+    password: str
+    is_admin: bool = False
+
+
+class UserPatch(BaseModel):
+    new_username: str | None = None
+    password: str | None = None
+    is_admin: bool | None = None
+
+
+def _require_admin(request: Request) -> dict:
+    """Defense-in-depth: the Edge middleware already gates admin paths, but verify
+    the session here too so these endpoints are safe even if hit directly."""
+    current = auth.authenticate(request.cookies.get(config.SESSION_COOKIE, ""))
+    if not current:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    if not current["is_admin"]:
+        raise HTTPException(status_code=403, detail="Admin access required.")
+    return current
+
+
+@app.post("/login")
+def login(username: str = Form(...), password: str = Form(...)) -> Response:
+    """Verify credentials and set the signed session cookie (used by /login form)."""
+    auth._ensure_seeded()
+    user = auth.get_user(username.strip())
+    if not user or not auth.verify_password(password, user["password_hash"]):
+        return RedirectResponse(url="/login?error=1", status_code=303)
+    token = auth.sign_session(user["username"], bool(user.get("is_admin")))
+    resp = RedirectResponse(url="/", status_code=303)
+    resp.set_cookie(
+        config.SESSION_COOKIE, token,
+        httponly=True, secure=config.COOKIE_SECURE, samesite="lax",
+        max_age=config.SESSION_DAYS * 86400, path="/",
+    )
+    return resp
+
+
+@app.get("/me")
+def me(request: Request) -> dict:
+    """Identity for the SPA. In production the Edge middleware answers /api/me from
+    the cookie; this backend copy makes local dev (no middleware) work too."""
+    current = auth.authenticate(request.cookies.get(config.SESSION_COOKIE, ""))
+    if not current:
+        raise HTTPException(status_code=401, detail="Not authenticated.")
+    return {"user": current["username"], "admin": current["is_admin"]}
+
+
+@app.get("/users")
+def list_users(request: Request) -> dict:
+    _require_admin(request)
+    return {"users": auth.list_users()}
+
+
+@app.post("/users")
+def create_user(u: UserIn, request: Request) -> dict:
+    _require_admin(request)
+    name = u.username.strip()
+    if not name or not u.password:
+        raise HTTPException(status_code=400, detail="Username and password are required.")
+    if "," in name or ":" in name:
+        raise HTTPException(status_code=400, detail="Username can't contain ',' or ':'.")
+    try:
+        return auth.create_user(name, u.password, u.is_admin)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.put("/users/{username}")
+def update_user(username: str, patch: UserPatch, request: Request) -> dict:
+    current = _require_admin(request)
+    name = (patch.new_username or "").strip()
+    if name and ("," in name or ":" in name):
+        raise HTTPException(status_code=400, detail="Username can't contain ',' or ':'.")
+    # Don't let the last admin demote themselves and lock everyone out.
+    if patch.is_admin is False:
+        admins = [x for x in auth.list_users() if x["is_admin"]]
+        if len(admins) <= 1 and any(x["username"] == username for x in admins):
+            raise HTTPException(status_code=400, detail="Can't remove the last admin.")
+    try:
+        return auth.update_user(
+            username,
+            password=patch.password or None,
+            is_admin=patch.is_admin,
+            new_username=name or None,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.delete("/users/{username}")
+def delete_user(username: str, request: Request) -> dict:
+    current = _require_admin(request)
+    if username == current["username"]:
+        raise HTTPException(status_code=400, detail="You can't delete your own account.")
+    users = auth.list_users()
+    target = next((x for x in users if x["username"] == username), None)
+    if target and target["is_admin"] and len([x for x in users if x["is_admin"]]) <= 1:
+        raise HTTPException(status_code=400, detail="Can't delete the last admin.")
+    auth.delete_user(username)
+    return {"status": "deleted", "username": username}
 
 
 @app.post("/index", response_model=IndexResponse)

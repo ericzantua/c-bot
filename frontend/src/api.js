@@ -3,6 +3,14 @@
 const BASE = "/api";
 
 async function handle(res) {
+  if (
+    res.status === 401 &&
+    typeof window !== "undefined" &&
+    !window.location.pathname.startsWith("/login")
+  ) {
+    // Session missing/expired → back to the login page (guard avoids a loop).
+    window.location.href = "/login";
+  }
   if (!res.ok) {
     let detail = res.statusText;
     try {
@@ -20,6 +28,33 @@ async function handle(res) {
 // is HttpOnly, so the SPA asks the server instead of reading it).
 export async function getMe() {
   return handle(await fetch(`${BASE}/me`));
+}
+
+// ---- user management (admin only) ----
+export async function listUsers() {
+  return handle(await fetch(`${BASE}/users`));
+}
+export async function createUser(user) {
+  const res = await fetch(`${BASE}/users`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(user),
+  });
+  return handle(res);
+}
+export async function updateUser(username, patch) {
+  const res = await fetch(`${BASE}/users/${encodeURIComponent(username)}`, {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(patch),
+  });
+  return handle(res);
+}
+export async function deleteUser(username) {
+  const res = await fetch(`${BASE}/users/${encodeURIComponent(username)}`, {
+    method: "DELETE",
+  });
+  return handle(res);
 }
 
 export async function indexCodes(itemCodes) {
