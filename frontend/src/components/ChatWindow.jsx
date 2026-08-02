@@ -17,6 +17,13 @@ function toSpeech(md) {
     .trim();
 }
 
+const LABELS = {
+  idle: "Tap the mic or say “C-Bot” to start",
+  listening: "Listening for “C-Bot”…",
+  capturing: "I'm listening — go ahead",
+  speaking: "Speaking… (tap the character or Listen to interrupt)",
+};
+
 const GREETING_TEXT =
   "Hi! I'm C-Bot. Ask me about any Costco product you've indexed, or ask me " +
   "to compare a few. You can type, or turn on the mic and say “C-Bot”.";
@@ -197,6 +204,7 @@ export default function ChatWindow({ language = "en" }) {
       </div>
 
       <footer className="voice-bar">
+        <span className="voice-status">{LABELS[voice.state] || ""}</span>
         <div className="voice-controls">
           {bilingual && (
             <button
