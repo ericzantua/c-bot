@@ -149,6 +149,10 @@ export function useVoice(onPrompt, lang = "en-CA") {
   const bargeInRef = useRef(false);
   const langRef = useRef(lang);
   langRef.current = lang;
+  // Actual speech-recognition locale. Starts as the selected language but falls
+  // back to English if the device's dictation doesn't include that language
+  // (common on phones — only the languages you've added are available).
+  const sttLangRef = useRef(lang);
   const onPromptRef = useRef(onPrompt);
   onPromptRef.current = onPrompt;
 
@@ -212,7 +216,7 @@ export function useVoice(onPrompt, lang = "en-CA") {
       }
     }
     const recog = new SpeechRecognition();
-    recog.lang = langRef.current || "en-CA";
+    recog.lang = sttLangRef.current || "en-CA";
     recog.continuous = true;
     recog.interimResults = true;
     recogRef.current = recog;
@@ -270,6 +274,22 @@ export function useVoice(onPrompt, lang = "en-CA") {
       if (event.error === "not-allowed" || event.error === "service-not-allowed") {
         setError("Microphone permission denied. Voice is off; text chat still works.");
         stop();
+      } else if (event.error === "language-not-supported") {
+        // The device's dictation doesn't include the selected language (e.g. a
+        // phone only supports the languages you've added). Fall back to English
+        // input so Talk still works — the reply still comes back in the selected
+        // language via the bilingual path.
+        if ((sttLangRef.current || "").slice(0, 2).toLowerCase() !== "en") {
+          sttLangRef.current = "en-US";
+          setError(
+            "Your device can't listen in that language — switched voice input to English. " +
+              "Add the language in your device's keyboard/dictation settings, or use the " +
+              "“⌨️ Input” toggle. (You'll still get answers in the selected language.)"
+          );
+          startRecognition();
+        } else {
+          setError("Speech recognition isn't available on this device/browser.");
+        }
       } else if (event.error !== "no-speech" && event.error !== "aborted") {
         setError(`Speech recognition: ${event.error}`);
       }
@@ -434,8 +454,10 @@ export function useVoice(onPrompt, lang = "en-CA") {
     }
   }, [stopAudio, armSilenceTimer, startRecognition]);
 
-  // Re-apply the recognition locale when the language changes.
+  // Re-apply the recognition locale when the language changes (retry the native
+  // locale — the previous language may have fallen back to English).
   useEffect(() => {
+    sttLangRef.current = lang;
     if (enabledRef.current && !speakingRef.current) startRecognition();
   }, [lang, startRecognition]);
 
