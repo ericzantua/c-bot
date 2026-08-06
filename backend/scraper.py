@@ -158,6 +158,26 @@ def _extract(html: str, item_code: str, url: str) -> ProductData:
             break
     product.features = features[:20]
 
+    # Costco shows the customer-facing item number + model on a line under the
+    # title, e.g. "Item 3118678 | Model B8NVL-678CA". The URL's partNumber is a
+    # DIFFERENT internal id, so prefer THIS item number as item_code (that's what
+    # customers use), and capture the model. The "|" may be CSS, not text, so it's
+    # optional; require Item and Model to be adjacent to avoid false matches.
+    page_text = soup.get_text(" ", strip=True)
+    combo = re.search(
+        r"Item\s+#?\s*(\d{4,})\s*\|?\s*Model\b\s*#?\s*([^\s|]{1,40})", page_text
+    )
+    if combo:
+        product.item_code = combo.group(1)
+        product.model = combo.group(2)
+    else:
+        m_item = re.search(r"\bItem\s+#?\s*(\d{5,})", page_text)
+        if m_item:
+            product.item_code = m_item.group(1)
+        m_model = re.search(r"\bModel\b\s*#?\s*([^\s|]{2,40})", page_text)
+        if m_model:
+            product.model = m_model.group(1)
+
     if not product.title:
         raise ScrapeError(
             f"Item {item_code}: page loaded but no product data was found "

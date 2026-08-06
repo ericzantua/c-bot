@@ -84,7 +84,7 @@ Backend endpoints (`backend/main.py`):
 - `_open_context(pw) → (context, closer)` — build browser ctx honouring stealth/channel/headless/profile flags
 - `_warm_up(context)` — visit homepage first so Akamai sets clearance cookie before product pages
 - `_scrape_one(context, url, code) → ProductData|ScrapeError` — goto url, extract/detect-block
-- `_extract(html, code, url) → ProductData` — JSON-LD Product first, DOM/meta fallback
+- `_extract(html, code, url) → ProductData` — JSON-LD Product first, DOM/meta fallback. Parses the on-page "Item #### | Model ####" line and OVERRIDES `item_code` with the customer-facing item number (the URL/JSON-LD partNumber is a different internal id) + fills `model`
 - `_parse_json_ld / _iter_nodes / _is_product` — schema.org Product finder
 - `_product_url(code)` = `{COSTCO_BASE}/product.{code}.html`; `_looks_blocked(html)` — bot-detect markers
 
