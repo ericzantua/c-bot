@@ -84,7 +84,8 @@ Backend endpoints (`backend/main.py`):
 - `_open_context(pw) → (context, closer)` — build browser ctx honouring stealth/channel/headless/profile flags
 - `_warm_up(context)` — visit homepage first so Akamai sets clearance cookie before product pages
 - `_scrape_one(context, url, code) → ProductData|ScrapeError` — goto url, extract/detect-block
-- `_extract(html, code, url) → ProductData` — JSON-LD Product first, DOM/meta fallback. Parses the on-page "Item #### | Model ####" line and OVERRIDES `item_code` with the customer-facing item number (the URL/JSON-LD partNumber is a different internal id) + fills `model`
+- `_extract(html, code, url) → ProductData` — JSON-LD Product first, DOM/meta fallback. Parses the on-page "Item #### | Model ####" line and OVERRIDES `item_code` with the customer-facing item number (the URL/JSON-LD partNumber is a different internal id) + fills `model`. Then calls `_apply_pricing`
+- `_apply_pricing(html, page_text, product)` — pricing from Costco's embedded Next.js `displayPrice` block (authoritative): `onlinePrice`=regular, `deliveredPrice`=current/effective, `aggregatedDiscountAmt`=savings. **JSON-LD's offer price is the REGULAR price, not the sale price** — so on-sale items must use `deliveredPrice`. On sale → `price`+`promo_price`=deliveredPrice, `regular_price`=onlinePrice; `price_valid_until` from the "Valid for orders placed .. to <date>" promo statement (`_norm_date` → YYYY-MM-DD)
 - `_parse_json_ld / _iter_nodes / _is_product` — schema.org Product finder
 - `_product_url(code)` = `{COSTCO_BASE}/product.{code}.html`; `_looks_blocked(html)` — bot-detect markers
 
