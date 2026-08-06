@@ -18,6 +18,7 @@ class ProductData(BaseModel):
     price_valid_until: str = ""  # sale-price expiration, e.g. "2026-07-26"
     description: str = ""
     features: list[str] = Field(default_factory=list)
+    specifications: dict[str, str] = Field(default_factory=dict)  # spec table: name -> value
     rating: str = ""
     url: str = ""
 

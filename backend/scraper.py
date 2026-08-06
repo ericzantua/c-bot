@@ -152,6 +152,31 @@ def _is_product(node: dict) -> bool:
     return node_type == "Product"
 
 
+def _extract_specs(soup: BeautifulSoup) -> dict:
+    """Costco's 'Specifications' table (data-testid=Table_ProductSpecifications):
+    each row is <th>name</th> + value cell. Repeated names (Features, Model, …)
+    are merged with '; '."""
+    table = soup.find("table", attrs={"data-testid": "Table_ProductSpecifications"})
+    if not table:
+        return {}
+    specs: dict[str, str] = {}
+    for tr in table.find_all("tr"):
+        cells = tr.find_all(["th", "td"])
+        if len(cells) < 2:
+            continue
+        name = _clean(cells[0].get_text())
+        value = _clean(cells[-1].get_text())
+        if not name or not value:
+            continue
+        if name in specs:
+            parts = [p.strip() for p in specs[name].split(";")]
+            if value not in parts:
+                specs[name] = f"{specs[name]}; {value}"
+        else:
+            specs[name] = value
+    return specs
+
+
 def _extract(html: str, item_code: str, url: str) -> ProductData:
     soup = BeautifulSoup(html, "html.parser")
     product = ProductData(item_code=item_code, url=url)
@@ -230,6 +255,7 @@ def _extract(html: str, item_code: str, url: str) -> ProductData:
             product.model = m_model.group(1)
 
     _apply_pricing(html, page_text, product)
+    product.specifications = _extract_specs(soup)
 
     if not product.title:
         raise ScrapeError(

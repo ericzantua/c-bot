@@ -39,12 +39,30 @@ const MANUAL_FIELDS = [
 const EMPTY_PRODUCT = {
   item_code: "", title: "", brand: "", model: "", price: "", price_date: "",
   promo_price: "", price_valid_until: "", rating: "", description: "", features: "",
+  specifications: "",
+};
+
+// specifications is stored as { name: value }; edited as "Name: Value" per line.
+const specsToText = (obj) =>
+  Object.entries(obj || {}).map(([k, v]) => `${k}: ${v}`).join("\n");
+const textToSpecs = (text) => {
+  const out = {};
+  for (const line of (text || "").split("\n")) {
+    const i = line.indexOf(":");
+    if (i > 0) {
+      const k = line.slice(0, i).trim();
+      const v = line.slice(i + 1).trim();
+      if (k && v) out[k] = v;
+    }
+  }
+  return out;
 };
 
 function ProductCard({ product, onChanged }) {
   const [draft, setDraft] = useState({
     ...product,
     features: (product.features || []).join("\n"),
+    specifications: specsToText(product.specifications || {}),
   });
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -65,6 +83,7 @@ function ProductCard({ product, onChanged }) {
           .split("\n")
           .map((s) => s.trim())
           .filter(Boolean),
+        specifications: textToSpecs(draft.specifications),
       });
       setSaved(true);
       onChanged();
@@ -108,6 +127,10 @@ function ProductCard({ product, onChanged }) {
       <label className="field">
         <span>Features (one per line)</span>
         <textarea rows={3} value={draft.features} onChange={(e) => set("features", e.target.value)} />
+      </label>
+      <label className="field">
+        <span>Specifications (one “Name: Value” per line)</span>
+        <textarea rows={5} value={draft.specifications} onChange={(e) => set("specifications", e.target.value)} />
       </label>
       <div className="product-card-foot">
         <button onClick={save} disabled={saving}>
@@ -198,6 +221,7 @@ export default function Products({ products, onChanged }) {
       ...draft,
       item_code: draft.item_code.trim(),
       features: draft.features.split("\n").map((s) => s.trim()).filter(Boolean),
+      specifications: textToSpecs(draft.specifications),
     };
     const res = await run(() => indexManual([product]), `Adding ${product.item_code}…`);
     if (res) {
@@ -246,6 +270,15 @@ export default function Products({ products, onChanged }) {
             rows={3}
             value={draft.features}
             onChange={(e) => setField("features", e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <label className="field">
+          <span>Specifications (one “Name: Value” per line)</span>
+          <textarea
+            rows={4}
+            value={draft.specifications}
+            onChange={(e) => setField("specifications", e.target.value)}
             disabled={busy}
           />
         </label>

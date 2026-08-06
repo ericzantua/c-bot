@@ -91,6 +91,9 @@ def _chunks_for(product: ProductData) -> list[str]:
         chunks.append(f"{product.title} — Description: {product.description}")
     if product.features:
         chunks.append(f"{product.title} — Features: " + "; ".join(product.features))
+    if product.specifications:
+        spec_txt = "; ".join(f"{k}: {v}" for k, v in product.specifications.items())
+        chunks.append(f"{product.title} — Specifications: {spec_txt}")
     return chunks
 
 
