@@ -67,6 +67,57 @@ def _clean(text: str) -> str:
     return re.sub(r"\s+", " ", (text or "")).strip()
 
 
+def _norm_date(s: str) -> str:
+    """MM/DD/YY[YY] -> YYYY-MM-DD (Costco promo dates); pass through if unmatched."""
+    m = re.match(r"\s*(\d{1,2})/(\d{1,2})/(\d{2,4})", s)
+    if not m:
+        return s.strip()
+    mm, dd, yy = m.groups()
+    yy = "20" + yy if len(yy) == 2 else yy
+    return f"{yy}-{int(mm):02d}-{int(dd):02d}"
+
+
+def _apply_pricing(html: str, page_text: str, product: ProductData) -> None:
+    """Prices from Costco's embedded Next.js data (authoritative).
+
+    JSON-LD's offer price is the REGULAR price, not the sale price, so prefer the
+    displayPrice block: onlinePrice = regular, deliveredPrice = current/effective,
+    aggregatedDiscountAmt = savings. The sale window comes from the
+    'Valid for orders placed MM/DD/YY to MM/DD/YY.' promo statement.
+    """
+    def cad(v: str) -> str:
+        return f"{v} CAD" if v else ""
+
+    cur = reg = None
+    disc = 0.0
+    m = re.search(
+        r'displayPrice[\\":{]*onlinePrice[\\":]*([0-9.]+)[\\",]*'
+        r'aggregatedDiscountAmt[\\":]*([0-9.]+)[\\",]*deliveredPrice[\\":]*([0-9.]+)',
+        html,
+    )
+    if m:
+        reg, disc, cur = m.group(1), float(m.group(2) or 0), m.group(3)
+    else:
+        m2 = re.search(r'deliveredPrice[\\":]*([0-9.]+)', html)
+        if m2:
+            cur = m2.group(1)
+
+    if cur:
+        product.price = cad(cur)  # current / effective price (overrides JSON-LD)
+        if reg and disc and float(reg) > float(cur):  # on sale
+            product.regular_price = cad(reg)
+            product.promo_price = cad(cur)  # sale price == current when discounted
+
+    vm = re.search(
+        r"Valid for orders?\s+placed\s+[\d/]+\s+to\s+(\d{1,2}/\d{1,2}/\d{2,4})",
+        page_text,
+    ) or re.search(
+        r"Valid for orders?\s+placed\s+[\d/]+\s+to\s+(\d{1,2}/\d{1,2}/\d{2,4})", html
+    )
+    if vm:
+        product.price_valid_until = _norm_date(vm.group(1))
+
+
 def _parse_json_ld(soup: BeautifulSoup) -> dict:
     """Return the first schema.org Product object found in JSON-LD, if any."""
     for tag in soup.find_all("script", type="application/ld+json"):
@@ -177,6 +228,8 @@ def _extract(html: str, item_code: str, url: str) -> ProductData:
         m_model = re.search(r"\bModel\b\s*#?\s*([^\s|]{2,40})", page_text)
         if m_model:
             product.model = m_model.group(1)
+
+    _apply_pricing(html, page_text, product)
 
     if not product.title:
         raise ScrapeError(
