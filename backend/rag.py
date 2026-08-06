@@ -66,16 +66,23 @@ def _chunks_for(product: ProductData) -> list[str]:
     """Turn a product into a handful of self-contained text chunks."""
     price_bits = []
     if product.price:
-        price_bits.append(f"current price {product.price}")
+        bit = f"current price {product.price}"
+        if product.price_date:
+            bit += f" (as of {product.price_date})"
+        price_bits.append(bit)
     if product.regular_price:
         price_bits.append(f"regular price {product.regular_price}")
     if product.promo_price:
-        price_bits.append(f"promo price {product.promo_price}")
-    if product.price_valid_until:
-        price_bits.append(f"promo valid until {product.price_valid_until}")
+        bit = f"sale price {product.promo_price}"
+        if product.price_valid_until:
+            bit += f" (until {product.price_valid_until})"
+        price_bits.append(bit)
+    elif product.price_valid_until:
+        price_bits.append(f"price valid until {product.price_valid_until}")
     pricing = "; ".join(price_bits) or "price N/A"
+    model_bit = f"Model: {product.model}. " if product.model else ""
     header = (
-        f"{product.title}. Brand: {product.brand or 'N/A'}. {pricing}. "
+        f"{product.title}. Brand: {product.brand or 'N/A'}. {model_bit}{pricing}. "
         f"Rating: {product.rating or 'N/A'}. "
         f"Costco item number: {product.item_code}."
     )

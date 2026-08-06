@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import {
   deleteProduct,
   indexCodes,
+  indexManual,
   indexOpenTabs,
   indexPhoto,
   indexUrls,
@@ -12,13 +13,33 @@ import {
 const FIELDS = [
   { key: "title", label: "Title" },
   { key: "brand", label: "Brand" },
+  { key: "model", label: "Model" },
   { key: "price", label: "Current price" },
+  { key: "price_date", label: "Current price date" },
+  { key: "promo_price", label: "Sale price" },
+  { key: "price_valid_until", label: "Sale price expires" },
   { key: "regular_price", label: "Regular price" },
-  { key: "promo_price", label: "Promo price" },
-  { key: "price_valid_until", label: "Promo valid until" },
   { key: "rating", label: "Rating" },
   { key: "url", label: "URL" },
 ];
+
+// Manual-add form fields (works from any device — no scraping). item_code first.
+const MANUAL_FIELDS = [
+  { key: "item_code", label: "Item code / number *", placeholder: "e.g. 1858512" },
+  { key: "title", label: "Product name" },
+  { key: "brand", label: "Brand" },
+  { key: "model", label: "Model" },
+  { key: "price", label: "Current price", placeholder: "$59.99" },
+  { key: "price_date", label: "Current price date", placeholder: "2026-08-06" },
+  { key: "promo_price", label: "Sale price" },
+  { key: "price_valid_until", label: "Sale price expires", placeholder: "2026-08-20" },
+  { key: "rating", label: "Rating", placeholder: "4.5" },
+];
+
+const EMPTY_PRODUCT = {
+  item_code: "", title: "", brand: "", model: "", price: "", price_date: "",
+  promo_price: "", price_valid_until: "", rating: "", description: "", features: "",
+};
 
 function ProductCard({ product, onChanged }) {
   const [draft, setDraft] = useState({
@@ -101,9 +122,12 @@ function ProductCard({ product, onChanged }) {
 export default function Products({ products, onChanged }) {
   const [codesText, setCodesText] = useState("");
   const [urlsText, setUrlsText] = useState("");
+  const [draft, setDraft] = useState(EMPTY_PRODUCT);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState(null);
   const fileRef = useRef(null);
+
+  const setField = (k, v) => setDraft((d) => ({ ...d, [k]: v }));
 
   function applyResults(results, prefix = []) {
     const lines = [...prefix];
@@ -166,6 +190,22 @@ export default function Products({ products, onChanged }) {
     if (fileRef.current) fileRef.current.value = "";
   }
 
+  async function addManual() {
+    if (!draft.item_code.trim()) {
+      return setStatus({ kind: "error", lines: ["Item code / number is required."] });
+    }
+    const product = {
+      ...draft,
+      item_code: draft.item_code.trim(),
+      features: draft.features.split("\n").map((s) => s.trim()).filter(Boolean),
+    };
+    const res = await run(() => indexManual([product]), `Adding ${product.item_code}…`);
+    if (res) {
+      applyResults(res.results);
+      if (res.results.every((r) => r.status === "indexed")) setDraft(EMPTY_PRODUCT);
+    }
+  }
+
   async function openTabs() {
     const res = await run(() => indexOpenTabs(), "Reading open Costco tab(s)…");
     if (res) applyResults(res.results);
@@ -179,6 +219,38 @@ export default function Products({ products, onChanged }) {
   return (
     <div className="products-page">
       <aside className="ingest-panel">
+        <h2>Add a product</h2>
+        {MANUAL_FIELDS.map((f) => (
+          <label className="field" key={f.key}>
+            <span>{f.label}</span>
+            <input
+              value={draft[f.key]}
+              placeholder={f.placeholder || ""}
+              onChange={(e) => setField(f.key, e.target.value)}
+              disabled={busy}
+            />
+          </label>
+        ))}
+        <label className="field">
+          <span>Description</span>
+          <textarea
+            rows={2}
+            value={draft.description}
+            onChange={(e) => setField("description", e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <label className="field">
+          <span>Features (one per line)</span>
+          <textarea
+            rows={3}
+            value={draft.features}
+            onChange={(e) => setField("features", e.target.value)}
+            disabled={busy}
+          />
+        </label>
+        <button onClick={addManual} disabled={busy}>Add product</button>
+
         <h2>Add by item code</h2>
         <textarea
           rows={2}

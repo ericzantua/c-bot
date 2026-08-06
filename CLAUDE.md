@@ -46,7 +46,7 @@ costco-c-bot/
 │       ├── styles.css     all styling
 │       ├── components/
 │       │   ├── ChatWindow.jsx     Chat page: character stage (store bg) + conversation (RIGHT, bilingual tabs) + bottom voice bar
-│       │   ├── Products.jsx       Products page: ingestion panel + editable product cards (save/delete)
+│       │   ├── Products.jsx       Products page: manual-add form (works on any device, no scrape) + scrape/photo ingestion panel + editable product cards (save/delete)
 │       │   ├── Settings.jsx       Settings page: AI guidance editor + Knowledge base (add text/file, list, delete)
 │       │   ├── Message.jsx        one bubble + citation chips
 │       │   └── CBotCharacter.jsx  Lottie avatar (transparent, red vest, "Major Sales"); PLAYS while talking, PAUSES while listening; tap = interrupt
@@ -140,7 +140,7 @@ Stop-self-answer bug); audio unlocked on mic tap (autoplay); animation starts on
 - **Knowledge base** — reference docs (policies/rules/returns) in separate Supabase tables (`knowledge_docs`/`knowledge_chunks`); chat retrieves top-4 knowledge chunks + products, prompt distinguishes PRODUCTS vs KNOWLEDGE. Loaded a real Costco returns/policy doc (15 chunks). RTF isn't accepted by the uploader (txt/md/pdf only) — convert via `textutil` first.
 - **Multilingual (en/yue/es/fr/hi/it/ja/ko/pt)** — 🌐 selector; `/chat` `language` param → Claude answers in it (data stays grounded, translated; item#/brands kept). Languages live in `frontend/src/languages.js` (`code`/`label`/`bcp47`) AND `backend/rag.py` `_LANG_NAMES` (must add both for a new language). TTS auto-detects language (ElevenLabs). STT locale = `bcp47For(lang)`. Cantonese = Traditional Chinese text; voice/STT lean Mandarin (weaker). Non-English replies use a forced tool call so both language versions always return (see rag.chat in §2).
 - **Bilingual tabs** — non-English shows [lang]|English tabs; each message stored in both languages; backend returns both per turn. "⌨️ Input" toggle: speak/type English while C-Bot answers in the selected language (STT switches to en).
-- **Editable products** — full ProductData stored as `data` jsonb in Supabase `products` → edit (PUT) without re-scraping; re-embeds on save. Fields incl. regular/promo price + `price_valid_until`.
+- **Editable products** — full ProductData stored as `data` jsonb in Supabase `products` → edit (PUT) without re-scraping; re-embeds on save. Fields: `item_code`, `title`, `brand`, `model`, `price` (current) + `price_date`, `regular_price`, `promo_price` (sale) + `price_valid_until` (sale expiry), `description`, `features[]`, `rating`, `url`. All surfaced in the edit cards AND a **manual-add form** (Products page, admin-only, no scraping → the phone-friendly way to add). `rag._chunks_for` embeds model + price/date/sale into the header so chat can answer about them.
 - **Settings/guidelines** — persisted in Supabase `settings` row (`settings_store`), injected into chat system prompt (category-specific clarifying questions).
 - Online only (offline/Ollama idea dropped). Chat + vision = Claude Sonnet 4.6.
 - **Vite `/api` proxy** — same-origin dev, no CORS friction. Mic needs HTTPS on non-localhost (Safari) → satisfied by the Vercel HTTPS domain in prod.

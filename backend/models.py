@@ -10,10 +10,12 @@ class ProductData(BaseModel):
     item_code: str
     title: str = ""
     brand: str = ""
+    model: str = ""
     price: str = ""  # current / effective price
+    price_date: str = ""  # date the current price was recorded/valid, e.g. "2026-08-06"
     regular_price: str = ""
-    promo_price: str = ""
-    price_valid_until: str = ""  # e.g. "2026-07-26"
+    promo_price: str = ""  # sale price
+    price_valid_until: str = ""  # sale-price expiration, e.g. "2026-07-26"
     description: str = ""
     features: list[str] = Field(default_factory=list)
     rating: str = ""
