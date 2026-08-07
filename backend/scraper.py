@@ -77,12 +77,14 @@ def _norm_date(s: str) -> str:
     return f"{yy}-{int(mm):02d}-{int(dd):02d}"
 
 
-def _apply_pricing(html: str, page_text: str, product: ProductData) -> None:
+def _apply_pricing(html: str, page_text: str, soup: BeautifulSoup, product: ProductData) -> None:
     """Prices from Costco's embedded Next.js data (authoritative).
 
-    JSON-LD's offer price is the REGULAR price, not the sale price, so prefer the
-    displayPrice block: onlinePrice = regular, deliveredPrice = current/effective,
-    aggregatedDiscountAmt = savings. The sale window comes from the
+    New template: JSON-LD's offer price is the REGULAR price, not the sale price,
+    so prefer the displayPrice block: onlinePrice = regular, deliveredPrice =
+    current/effective, aggregatedDiscountAmt = savings. Legacy template (old
+    /<slug>.product.####.html pages) has no such block — fall back to the clean
+    price in [automation-id='productPriceOutput']. Sale window from the
     'Valid for orders placed MM/DD/YY to MM/DD/YY.' promo statement.
     """
     def cad(v: str) -> str:
@@ -102,11 +104,20 @@ def _apply_pricing(html: str, page_text: str, product: ProductData) -> None:
         if m2:
             cur = m2.group(1)
 
+    if not cur:  # legacy template: clean price in the automation-id element
+        el = soup.select_one("[automation-id='productPriceOutput']")
+        if el:
+            mnum = re.search(r"([0-9][0-9,]*\.[0-9]{2})", el.get_text())
+            if mnum:
+                cur = mnum.group(1).replace(",", "")
+
     if cur:
         product.price = cad(cur)  # current / effective price (overrides JSON-LD)
         if reg and disc and float(reg) > float(cur):  # on sale
             product.regular_price = cad(reg)
             product.promo_price = cad(cur)  # sale price == current when discounted
+    elif product.price and not re.match(r"^[0-9][0-9,]*\.[0-9]{2}", product.price):
+        product.price = ""  # drop a malformed fallback (e.g. "Price --$") rather than store garbage
 
     vm = re.search(
         r"Valid for orders?\s+placed\s+[\d/]+\s+to\s+(\d{1,2}/\d{1,2}/\d{2,4})",
@@ -218,10 +229,6 @@ def _extract(html: str, item_code: str, url: str) -> ProductData:
         meta = soup.find("meta", attrs={"name": "description"})
         if meta:
             product.description = _clean(meta.get("content", ""))
-    if not product.price:
-        price_el = soup.select_one("[automation-id='productPriceOutput'], .price, .your-price")
-        if price_el:
-            product.price = _clean(price_el.get_text())
 
     # Bullet-point feature list, commonly rendered as a UL under the product info.
     features: list[str] = []
@@ -254,7 +261,7 @@ def _extract(html: str, item_code: str, url: str) -> ProductData:
         if m_model:
             product.model = m_model.group(1)
 
-    _apply_pricing(html, page_text, product)
+    _apply_pricing(html, page_text, soup, product)
     product.specifications = _extract_specs(soup)
 
     if not product.title:
